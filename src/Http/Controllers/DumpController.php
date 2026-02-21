@@ -5,6 +5,7 @@ namespace Elliptic\Backfill\Http\Controllers;
 use Elliptic\Backfill\Services\RowLimiterService;
 use Elliptic\Backfill\Services\SanitizationService;
 use Elliptic\Backfill\Services\SchemaService;
+use Elliptic\Backfill\Services\SubsetResolverService;
 use Elliptic\Backfill\Services\TempDatabaseService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -45,10 +46,11 @@ class DumpController
                 $sanitizer->sanitize($table, $sanitizeRules, $tempDb);
             }
 
-            // Apply row limits
-            $limitRules = config("backfill.limits.{$table}");
-            if ($limitRules) {
-                $limiter->apply($table, $limitRules, $tempDb, $schema);
+            // Apply row limits via stateless subset queries
+            $limits = config('backfill.limits', []);
+            if (! empty($limits)) {
+                $resolver = new SubsetResolverService($schema, $limits, $tempDb->getSourceDatabase());
+                $limiter->apply($table, $tempDb, $resolver, $schema);
             }
 
             // If delta, delete rows older than the "after" timestamp

@@ -4,6 +4,7 @@ namespace Elliptic\Backfill\Tests\Unit;
 
 use Elliptic\Backfill\Services\RowLimiterService;
 use Elliptic\Backfill\Services\SchemaService;
+use Elliptic\Backfill\Services\SubsetResolverService;
 use Elliptic\Backfill\Services\TempDatabaseService;
 use Elliptic\Backfill\Tests\TestCase;
 use Illuminate\Support\Facades\DB;
@@ -65,10 +66,14 @@ class RowLimiterServiceTest extends TestCase
 
         $this->tempDb->prepare('logs');
 
+        $resolver = new SubsetResolverService($this->schema, [
+            'logs' => ['max_rows' => 2, 'order_by' => 'id', 'direction' => 'desc']
+        ], '');
+
         $this->service->apply(
             'logs',
-            ['max_rows' => 2, 'order_by' => 'id', 'direction' => 'desc'],
             $this->tempDb,
+            $resolver,
             $this->schema
         );
 
@@ -94,10 +99,14 @@ class RowLimiterServiceTest extends TestCase
 
         $this->tempDb->prepare('logs');
 
+        $resolver = new SubsetResolverService($this->schema, [
+            'logs' => ['keep_days' => 5, 'order_by' => 'created_at']
+        ], '');
+
         $this->service->apply(
             'logs',
-            ['keep_days' => 5, 'order_by' => 'created_at'],
             $this->tempDb,
+            $resolver,
             $this->schema
         );
 
@@ -123,10 +132,14 @@ class RowLimiterServiceTest extends TestCase
 
         $this->tempDb->prepare('logs');
 
+        $resolver = new SubsetResolverService($this->schema, [
+            'logs' => ['keep_days' => 5, 'max_rows' => 2, 'order_by' => 'created_at', 'direction' => 'desc']
+        ], '');
+
         $this->service->apply(
             'logs',
-            ['keep_days' => 5, 'max_rows' => 2, 'order_by' => 'created_at', 'direction' => 'desc'],
             $this->tempDb,
+            $resolver,
             $this->schema
         );
 
@@ -151,10 +164,14 @@ class RowLimiterServiceTest extends TestCase
 
         $this->tempDb->prepare('logs');
 
+        $resolver = new SubsetResolverService($this->schema, [
+            'logs' => ['keep_days' => 5, 'order_by' => 'created_at']
+        ], '');
+
         $this->service->apply(
             'logs',
-            ['keep_days' => 5, 'order_by' => 'created_at'],
             $this->tempDb,
+            $resolver,
             $this->schema
         );
 
@@ -162,5 +179,42 @@ class RowLimiterServiceTest extends TestCase
         $count = DB::table(DB::raw($qualifiedLogs))->count();
 
         $this->assertEquals(0, $count);
+    }
+
+    public function test_it_keeps_parents_bottom_up()
+    {
+        DB::table('users')->insert([
+            ['id' => 1, 'name' => 'Recent User'],
+            ['id' => 2, 'name' => 'Old User'],
+            ['id' => 3, 'name' => 'Standalone User'],
+        ]);
+
+        DB::table('logs')->insert([
+            ['id' => 1, 'user_id' => 1, 'message' => 'New log', 'created_at' => now()->subDays(1)],
+            ['id' => 2, 'user_id' => 2, 'message' => 'Old log', 'created_at' => now()->subDays(10)],
+        ]);
+
+        $this->tempDb->prepare('users');
+
+        $resolver = new SubsetResolverService($this->schema, [
+            'users' => ['max_rows' => 1, 'order_by' => 'id', 'direction' => 'desc'], // intrinsically keeps User 3
+            'logs' => ['keep_days' => 5, 'order_by' => 'created_at'], // intrinsically keeps Log 1 (User 1)
+        ], '');
+
+        $this->service->apply(
+            'users',
+            $this->tempDb,
+            $resolver,
+            $this->schema
+        );
+
+        $qualifiedUsers = $this->tempDb->qualifiedTableName('users');
+        $remainingIds = DB::table(DB::raw($qualifiedUsers))->pluck('id')->toArray();
+
+        // User 3 is kept intrinsically. User 1 is kept bottom-up. User 2 is discarded.
+        $this->assertCount(2, $remainingIds);
+        $this->assertContains(1, $remainingIds);
+        $this->assertContains(3, $remainingIds);
+        $this->assertNotContains(2, $remainingIds);
     }
 }
