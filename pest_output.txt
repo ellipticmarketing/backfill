@@ -1,0 +1,89 @@
+
+  ....Γ¿»Γ¿»Γ¿»Γ¿»..........Γ¿».s.......
+  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
+   FAILED  Elliptic\Backfill\Tests\Unit\RowLimiΓÇª  Error   
+  Call to undefined method Elliptic\Backfill\Services\TempDatabaseService::copyTable()
+
+  at tests\Unit\RowLimiterServiceTest.php:59
+     55Γûò             ['id' => 2, 'message' => 'Second'],
+     56Γûò             ['id' => 3, 'message' => 'Third'],
+     57Γûò         ]);
+     58Γûò 
+  Γ₧£  59Γûò         $this->tempDb->copyTable('logs');
+     60Γûò 
+     61Γûò         $this->service->apply(
+     62Γûò             'logs',
+     63Γûò             ['max_rows' => 2, 'order_by' => 'id', 'direction' => 'desc'],
+
+  1   tests\Unit\RowLimiterServiceTest.php:59
+
+  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
+   FAILED  Elliptic\Backfill\Tests\Unit\RowLimiΓÇª  Error   
+  Call to undefined method Elliptic\Backfill\Services\TempDatabaseService::copyTable()
+
+  at tests\Unit\RowLimiterServiceTest.php:88
+     84Γûò             ['id' => 2, 'message' => 'Old', 'created_at' => now()->subDays(10)],
+     85Γûò             ['id' => 3, 'message' => 'Older', 'created_at' => now()->subDays(20)],
+     86Γûò         ]);
+     87Γûò 
+  Γ₧£  88Γûò         $this->tempDb->copyTable('logs');
+     89Γûò 
+     90Γûò         $this->service->apply(
+     91Γûò             'logs',
+     92Γûò             ['keep_days' => 5, 'order_by' => 'created_at'],
+
+  1   tests\Unit\RowLimiterServiceTest.php:88
+
+  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
+   FAILED  Elliptic\Backfill\Tests\Unit\RowLimiΓÇª  Error   
+  Call to undefined method Elliptic\Backfill\Services\TempDatabaseService::copyTable()
+
+  at tests\Unit\RowLimiterServiceTest.php:117
+    113Γûò             ['id' => 3, 'message' => 'Log 3', 'created_at' => now()->subDays(3)],
+    114Γûò             ['id' => 4, 'message' => 'Log 4', 'created_at' => now()->subDays(10)], // Too old
+    115Γûò         ]);
+    116Γûò 
+  Γ₧£ 117Γûò         $this->tempDb->copyTable('logs');
+    118Γûò 
+    119Γûò         $this->service->apply(
+    120Γûò             'logs',
+    121Γûò             ['keep_days' => 5, 'max_rows' => 2, 'order_by' => 'created_at', 'direction' => 'desc'],
+
+  1   tests\Unit\RowLimiterServiceTest.php:117
+
+  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
+   FAILED  Elliptic\Backfill\Tests\Unit\RowLimiΓÇª  Error   
+  Call to undefined method Elliptic\Backfill\Services\TempDatabaseService::copyTable()
+
+  at tests\Unit\RowLimiterServiceTest.php:145
+    141Γûò             ['id' => 1, 'message' => 'Old', 'created_at' => now()->subDays(10)],
+    142Γûò             ['id' => 2, 'message' => 'Older', 'created_at' => now()->subDays(20)],
+    143Γûò         ]);
+    144Γûò 
+  Γ₧£ 145Γûò         $this->tempDb->copyTable('logs');
+    146Γûò 
+    147Γûò         $this->service->apply(
+    148Γûò             'logs',
+    149Γûò             ['keep_days' => 5, 'order_by' => 'created_at'],
+
+  1   tests\Unit\RowLimiterServiceTest.php:145
+
+  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
+   FAILED  Tests\Feature\CommandΓÇª  AssertionFailedError   
+  Output does not contain "only allowed".
+
+  at tests\Feature\CommandsTest.php:9
+      5Γûò     app()->detectEnvironment(fn () => 'production');
+      6Γûò 
+      7Γûò     $this->artisan('backfill:pull')
+      8Γûò         ->expectsOutputToContain('only allowed')
+  Γ₧£   9Γûò         ->assertExitCode(1);
+     10Γûò });
+     11Γûò 
+     12Γûò it('shows status with no sync history', function () {
+     13Γûò     $this->artisan('backfill:status')
+
+
+  Tests:    5 failed, 1 skipped, 22 passed (42 assertions)
+  Duration: 0.67s
+
