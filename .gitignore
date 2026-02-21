@@ -1,0 +1,11 @@
+/vendor
+/node_modules
+/.idea
+.env
+.phpunit.cache
+/.phpunit.result.cache
+Homestead.json
+Homestead.yaml
+npm-debug.log
+yarn-error.log
+storage/backfill-state.json
