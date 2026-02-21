@@ -1,114 +1,43 @@
 
    PASS  Tests\Unit\AuthMiddlewareTest
-  Γ£ô it allows requests with valid token            0.12s  
-  Γ£ô it rejects requests with invalid token         0.02s  
-  Γ£ô it rejects requests with no token              0.01s  
-  Γ£ô it returns 500 if server token is not configuΓÇª 0.01s  
+  Γ£ô it allows requests with valid token            0.23s  
+  Γ£ô it rejects requests with invalid token         0.03s  
+  Γ£ô it rejects requests with no token              0.02s  
+  Γ£ô it returns 500 if server token is not configuΓÇª 0.02s  
 
-   FAIL  Elliptic\Backfill\Tests\Unit\RowLimiterServiceTest
-  Γ¿» it keeps only max rows                         0.04s  
-  Γ¿» it limits rows based on keep days              0.01s  
-  Γ¿» it combines keep days and max rows             0.01s  
-  Γ¿» it truncates if no rows match keep days        0.01s  
+   PASS  Elliptic\Backfill\Tests\Unit\RowLimiterServiceTest
+  Γ£ô it keeps only max rows                         0.08s  
+  Γ£ô it limits rows based on keep days              0.03s  
+  Γ£ô it combines keep days and max rows             0.02s  
+  Γ£ô it truncates if no rows match keep days        0.02s  
+  Γ£ô it keeps parents bottom up                     0.02s  
 
    PASS  Tests\Unit\SanitizationServiceTest
-  Γ£ô it generates email sanitization SQL            0.01s  
-  Γ£ô it generates name sanitization SQL             0.01s  
-  Γ£ô it generates phone sanitization SQL            0.01s  
+  Γ£ô it generates email sanitization SQL            0.03s  
+  Γ£ô it generates name sanitization SQL             0.02s  
+  Γ£ô it generates phone sanitization SQL            0.02s  
   Γ£ô it generates null sanitization SQL             0.01s  
   Γ£ô it generates hash sanitization SQL with bcrypΓÇª 0.01s  
-  Γ£ô it generates text sanitization SQL             0.01s  
-  Γ£ô it generates address sanitization SQL          0.01s  
-  Γ£ô it throws exception for unknown sanitizationΓÇª  0.01s  
-  Γ£ô it builds UPDATE SQL with exclude patterns usΓÇª 0.01s  
-  Γ£ô it builds simple UPDATE SQL without excludes   0.01s  
+  Γ£ô it generates text sanitization SQL             0.02s  
+  Γ£ô it generates address sanitization SQL          0.02s  
+  Γ£ô it throws exception for unknown sanitizationΓÇª  0.02s  
+  Γ£ô it builds UPDATE SQL with exclude patterns usΓÇª 0.02s  
+  Γ£ô it builds simple UPDATE SQL without excludes   0.02s  
 
    WARN  Tests\Feature\CommandsTest
-  Γ£ô it blocks pull on non-allowed environments     0.05s  
-  Γ£ô it shows status with no sync history           0.01s  
-  - it runs the install command successfully ΓåÆ SkΓÇª 0.01s  
-  Γ£ô it registers the install command               0.01s  
+  Γ£ô it blocks pull on non-allowed environments     0.12s  
+  Γ£ô it shows status with no sync history           0.02s  
+  - it runs the install command successfully ΓåÆ SkΓÇª 0.03s  
+  Γ£ô it registers the install command               0.03s  
 
    PASS  Tests\Feature\ImportServiceTest
-  Γ£ô it imports a SQL dump file using the PHP fallΓÇª 0.01s  
-  Γ£ô it handles full import by truncating first     0.01s  
-  Γ£ô it handles empty dump files gracefully         0.01s  
-  Γ£ô it rewrites temp table names to the real tablΓÇª 0.01s  
-  Γ£ô it throws exception for missing dump file      0.01s  
-  Γ£ô it returns local column listing                0.01s  
-  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
-   FAILED  Elliptic\Backfill\TestsΓÇª  ArgumentCountError   
-  Too few arguments to function Elliptic\Backfill\Services\TempDatabaseService::cleanup(), 0 passed in C:\Users\rolan\.gemini\antigravity\playground\solitary-ring\tests\Unit\RowLimiterServiceTest.php on line 54 and exactly 1 expected
+  Γ£ô it imports a SQL dump file using the PHP fallΓÇª 0.03s  
+  Γ£ô it handles full import by truncating first     0.05s  
+  Γ£ô it handles empty dump files gracefully         0.02s  
+  Γ£ô it rewrites temp table names to the real tablΓÇª 0.03s  
+  Γ£ô it throws exception for missing dump file      0.02s  
+  Γ£ô it returns local column listing                0.03s  
 
-  at src\Services\TempDatabaseService.php:137
-    133Γûò 
-    134Γûò     /**
-    135Γûò      * Clean up temp resources for a specific table.
-    136Γûò      */
-  Γ₧£ 137Γûò     public function cleanup(string $table): void
-    138Γûò     {
-    139Γûò         if ($this->strategy === 'database') {
-    140Γûò             if ($this->tempDatabase) {
-    141Γûò                 $this->db()->statement("DROP TABLE IF EXISTS `{$this->tempDatabase}`.`{$table}`");
-
-  1   src\Services\TempDatabaseService.php:137
-  2   tests\Unit\RowLimiterServiceTest.php:54
-
-  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
-   FAILED  Elliptic\Backfill\TestsΓÇª  ArgumentCountError   
-  Too few arguments to function Elliptic\Backfill\Services\TempDatabaseService::cleanup(), 0 passed in C:\Users\rolan\.gemini\antigravity\playground\solitary-ring\tests\Unit\RowLimiterServiceTest.php on line 54 and exactly 1 expected
-
-  at src\Services\TempDatabaseService.php:137
-    133Γûò 
-    134Γûò     /**
-    135Γûò      * Clean up temp resources for a specific table.
-    136Γûò      */
-  Γ₧£ 137Γûò     public function cleanup(string $table): void
-    138Γûò     {
-    139Γûò         if ($this->strategy === 'database') {
-    140Γûò             if ($this->tempDatabase) {
-    141Γûò                 $this->db()->statement("DROP TABLE IF EXISTS `{$this->tempDatabase}`.`{$table}`");
-
-  1   src\Services\TempDatabaseService.php:137
-  2   tests\Unit\RowLimiterServiceTest.php:54
-
-  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
-   FAILED  Elliptic\Backfill\TestsΓÇª  ArgumentCountError   
-  Too few arguments to function Elliptic\Backfill\Services\TempDatabaseService::cleanup(), 0 passed in C:\Users\rolan\.gemini\antigravity\playground\solitary-ring\tests\Unit\RowLimiterServiceTest.php on line 54 and exactly 1 expected
-
-  at src\Services\TempDatabaseService.php:137
-    133Γûò 
-    134Γûò     /**
-    135Γûò      * Clean up temp resources for a specific table.
-    136Γûò      */
-  Γ₧£ 137Γûò     public function cleanup(string $table): void
-    138Γûò     {
-    139Γûò         if ($this->strategy === 'database') {
-    140Γûò             if ($this->tempDatabase) {
-    141Γûò                 $this->db()->statement("DROP TABLE IF EXISTS `{$this->tempDatabase}`.`{$table}`");
-
-  1   src\Services\TempDatabaseService.php:137
-  2   tests\Unit\RowLimiterServiceTest.php:54
-
-  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
-   FAILED  Elliptic\Backfill\TestsΓÇª  ArgumentCountError   
-  Too few arguments to function Elliptic\Backfill\Services\TempDatabaseService::cleanup(), 0 passed in C:\Users\rolan\.gemini\antigravity\playground\solitary-ring\tests\Unit\RowLimiterServiceTest.php on line 54 and exactly 1 expected
-
-  at src\Services\TempDatabaseService.php:137
-    133Γûò 
-    134Γûò     /**
-    135Γûò      * Clean up temp resources for a specific table.
-    136Γûò      */
-  Γ₧£ 137Γûò     public function cleanup(string $table): void
-    138Γûò     {
-    139Γûò         if ($this->strategy === 'database') {
-    140Γûò             if ($this->tempDatabase) {
-    141Γûò                 $this->db()->statement("DROP TABLE IF EXISTS `{$this->tempDatabase}`.`{$table}`");
-
-  1   src\Services\TempDatabaseService.php:137
-  2   tests\Unit\RowLimiterServiceTest.php:54
-
-
-  Tests:    4 failed, 1 skipped, 23 passed (55 assertions)
-  Duration: 0.75s
+  Tests:    1 skipped, 28 passed (59 assertions)
+  Duration: 1.52s
 
