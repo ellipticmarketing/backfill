@@ -24,6 +24,7 @@ Production data is **never modified**. The package refuses to run destructive op
   - [backfill:pull](#backfillpull)
   - [backfill:status](#backfillstatus)
   - [backfill:cleanup](#backfillcleanup)
+- [Events](#events)
 - [How It Works](#how-it-works)
   - [Architecture](#architecture)
   - [Temporary Database Strategy](#temporary-database-strategy)
@@ -261,9 +262,11 @@ END
 
 Limits the number of rows synced for specific tables. Useful for large log, audit, or analytics tables where you only need recent data for development.
 
-**Foreign key safety:** When rows are deleted from a limited table, the package automatically resolves foreign key dependencies. Child rows referencing deleted parent rows are removed first, preventing orphan records.
+The package resolves foreign key dependencies utilizing a **Stateless Subset Resolver**:
+- **Bottom-Up Inclusion:** If a child table has no limit (e.g., you want all recent `cars`), the package organically keeps *all parent rows* referenced by those cars, even if the parent table itself has a limit (e.g., `users`).
+- **Top-Down Exclusion:** If a parent row evaluates as too old and gets discarded, any child rows referencing that orphaned parent are automatically removed as well.
 
-The package discovers FK relationships via `INFORMATION_SCHEMA.KEY_COLUMN_USAGE`, so no manual configuration is needed.
+This ensures perfect referential integrity, computing exact subsets via recursive subqueries directly in the database engine without PHP memory pressure.
 
 **Example:**
 
@@ -403,6 +406,28 @@ php artisan backfill:cleanup [options]
 | `--max-age=60` | Only drop temp databases older than this many minutes (default: 60). Prevents killing an active sync. |
 
 This command is **automatically scheduled to run hourly** on the server when `BACKFILL_SERVER_ENABLED=true`. You don't need to set up a cron job for it.
+
+---
+
+## Events
+
+### `SyncCompleted`
+
+Dispatched after a successful `backfill:pull` operation. Useful for clearing caches, triggering Laravel Scout re-indexing, or sending notifications.
+
+```php
+use Elliptic\Backfill\Events\SyncCompleted;
+use Illuminate\Support\Facades\Event;
+
+Event::listen(function (SyncCompleted $event) {
+    if ($event->isFullSync) {
+        // e.g., php artisan scout:import "App\Models\User"
+    }
+
+    $syncedTables = $event->tables;
+    $totalRows = $event->rowsSynced;
+});
+```
 
 ---
 
@@ -607,7 +632,7 @@ The scheduled job is **automatically registered** when `BACKFILL_SERVER_ENABLED=
 | Circular FK references | Detected and handled — cycles are broken in the topological sort. FK checks are disabled during import. |
 | Self-referencing tables | Supported (e.g., `categories.parent_id → categories.id`). Self-references are excluded from FK sorting. |
 | Multiple databases | Currently targets the default database connection only. Multi-database support is not yet implemented. |
-| PostgreSQL | The server-side sanitization and `mysqldump` are MySQL-specific. The client-side import has a PHP fallback that works with any database driver. Full PostgreSQL server support is a future enhancement. |
+| Supported Engines | The server-side sanitization and transport require **MySQL** or **MariaDB**. The package explicitly checks engine variants and will immediately fail if run against PostgreSQL, SQLite, or SQL Server. |
 | Binary/blob columns | Handled natively by `mysqldump`. No special configuration needed. |
 
 ---
@@ -622,9 +647,10 @@ composer test
 
 Tests cover:
 - Authentication middleware (valid/invalid/missing tokens)
+- Subsetting & Row Limiting (Top-down exclusions & Bottom-up inclusions)
 - Sanitization SQL generation (all types + exclude patterns)
 - Import service (full import, empty files, temp table name rewriting)
-- Artisan commands (environment guard, status display)
+- Artisan commands (interactive install, environment guards, status logic)
 
 ---
 
