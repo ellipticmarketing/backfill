@@ -6,8 +6,11 @@
         "laravel",
         "backfill",
         "database",
+        "mysql",
         "sanitization",
-        "sync"
+        "anonymization",
+        "data-sync",
+        "development-tools"
     ],
     "homepage": "https://github.com/ellipticmarketing/backfill",
     "license": "MIT",
