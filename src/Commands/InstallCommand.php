@@ -289,9 +289,8 @@ class InstallCommand extends Command
 
         $rulesString = implode("\n", $rules);
 
-        // Replace the empty sanitize block with the generated rules
         $content = preg_replace(
-            "/('sanitize'\s*=>\s*\[)\s*(\n\s*\/\/.*\n)*\s*(\],)/s",
+            "/'sanitize'\s*=>\s*\[[\s\S]*?(?:\n    \],)/",
             "'sanitize' => [\n{$rulesString}\n    ],",
             $content
         );
