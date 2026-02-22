@@ -9,7 +9,7 @@ return [
     |
     | A shared secret token used to authenticate sync requests between the
     | server (production) and client (local/staging). Both sides must use
-    | the same token. Generate a strong random string for this.
+    | the same token. The installation command can generate it.
     |
     */
 
@@ -84,6 +84,7 @@ return [
     |   'hash'    → Static bcrypt hash of 'password'
     |   'null'    → NULL
     |   'address' → CONCAT(id, ' Example St')
+    |   'local_ip'→ CONCAT('192.168.', FLOOR(RAND() * 255), '.', FLOOR(RAND() * 255))
     |
     | Each column rule may include:
     |   'type'    => (required) one of the types above
@@ -94,7 +95,7 @@ return [
     |   'users' => [
     |       'email' => [
     |           'type'    => 'email',
-    |           'exclude' => ['*@ellipticmarketing.com', 'john@example.com'],
+    |           'exclude' => ['*@mycompany.test', 'john@example.com'],
     |       ],
     |       'name'     => ['type' => 'name'],
     |       'phone'    => ['type' => 'phone'],
@@ -107,7 +108,7 @@ return [
         // 'users' => [
         //     'email' => [
         //         'type' => 'email',
-        //         'exclude' => ['*@ellipticmarketing.com'],
+        //         'exclude' => ['*@mycompany.test'],
         //     ],
         //     'name' => ['type' => 'name'],
         //     'password' => ['type' => 'hash'],

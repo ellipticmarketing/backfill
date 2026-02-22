@@ -12,7 +12,14 @@ class SchemaService
      */
     public function getTables(array $exclude = []): array
     {
-        $tables = Schema::getTableListing();
+        $database = config('database.connections.' . config('database.default') . '.database');
+
+        $result = DB::select(
+            'SELECT TABLE_NAME as name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = ?',
+            [$database, 'BASE TABLE']
+        );
+
+        $tables = array_map(fn ($row) => $row->name, $result);
 
         return array_values(array_diff($tables, $exclude));
     }

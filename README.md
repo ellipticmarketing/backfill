@@ -64,13 +64,13 @@ php artisan vendor:publish --tag="backfill-config"
 
 ### 1. Run the install command
 
-This generates a secure token and shows you exactly what to add to your `.env`:
+This generates a secure token and walks you through the setup:
 
 ```bash
 php artisan backfill:install
 ```
 
-The command detects your environment and shows the right instructions — server setup on production, client setup on local/staging. It can also write the token directly to your `.env` file.
+The installer will ask if you already have a Backfill token or need to generate a new one. It detects your environment and shows the right instructions — server setup on production, client setup on local/staging. It can also scan your database for columns that may need sanitization and write the rules to `config/backfill.php` for you.
 
 ### 2. Configure both environments
 
@@ -217,6 +217,7 @@ All sanitization happens **via SQL** in the temporary database. No PHP iteration
 | `hash` | Static bcrypt hash of `'password'` | `$2y$10$92IXUNpk...` (always the same) |
 | `null` | `NULL` | `NULL` |
 | `address` | `CONCAT(id, ' Example St')` | `123 Example St` |
+| `local_ip` | `CONCAT('192.168.', FLOOR(RAND()*255), '.', FLOOR(RAND()*255))` | `192.168.42.117` |
 
 #### Exclude Patterns
 
@@ -303,18 +304,19 @@ Tables listed here are **completely skipped** during sync. No data is transferre
 
 ### `backfill:install`
 
-Generate a sync token and display environment-specific setup instructions.
+Interactively set up Backfill for your environment.
 
 ```
 php artisan backfill:install
 ```
 
-- Generates a cryptographically random 64-character token
-- Offers to write `BACKFILL_TOKEN` directly to your `.env` file
-- Detects your environment and shows the right instructions:
-  - **Production** → server-side `.env` vars and privilege setup
-  - **Local/Staging** → client-side `.env` vars and pull commands
-- Reminds you to publish and customize the config file
+- **Token handling:** If a token already exists in `.env`, offers to keep it or configure a new one. Otherwise asks if you have an existing token to enter or generates a new 64-character random token.
+- **Environment detection:** Asks whether you're setting up the Server (production) or Client (local/staging) and shows the appropriate configuration.
+- **Auto-write to `.env`:** Writes `BACKFILL_TOKEN`, `BACKFILL_SERVER_ENABLED`, and `BACKFILL_SOURCE_URL` directly to your `.env` file.
+- **Config publishing:** Publishes `config/backfill.php` if it doesn't exist yet.
+- **Auto-sanitization scan:** If the sanitization config is still empty (default), offers to scan the database for columns that may contain sensitive data (emails, passwords, phones, addresses, IPs) and writes suggested rules to the config file. Works on both the server (scans local DB) and client (fetches schema from the remote server).
+- **Connection test (client):** Optionally tests the connection to the production server and reports the result.
+- **Idempotent:** Safe to re-run. Detects existing configuration and skips writing identical values.
 
 ---
 
@@ -331,6 +333,28 @@ php artisan backfill:pull [options]
 | `--full` | Force a complete re-sync, ignoring the last pull timestamp. Truncates all local tables before importing. |
 | `--tables=users,orders` | Only sync specific tables (comma-separated). |
 | `--dry-run` | Show what would be synced without making any changes. Displays a table with row counts, sanitization status, and limit status. |
+
+**How it works:**
+
+The pull command operates in three phases:
+
+1. **Download** — All SQL dump files are downloaded from the server first, without touching the local database. Downloads are saved to a temporary directory in `storage/app/`.
+2. **Schema comparison** — The remote column definitions from the manifest are compared against the local database schema. If there are mismatches (missing tables, extra/missing columns), a warning table is displayed and you can choose to abort and run migrations first. The downloaded data is preserved so you don't need to re-download.
+3. **Import** — Each downloaded dump file is imported into the local database.
+
+**Resuming interrupted downloads:**
+
+If a previous download exists that is less than 24 hours old, the command will detect it and offer a choice:
+
+```
+Found a recent download from 2 hours ago with 76 table dumps.
+
+Would you like to resume importing the existing data or download a fresh copy?
+  [0] Resume existing download
+  [1] Download fresh data
+```
+
+Choosing "Resume" skips the download phase entirely and goes straight to schema comparison → import. This is useful if the download completed but the import was interrupted, or if you need to run migrations before importing.
 
 **Examples:**
 
@@ -443,20 +467,26 @@ Local (Client)                          Production (Server)
    (Bearer token)                        Returns table list, row counts,
                   ◀──── JSON response── FK ordering, column metadata
                                         
-2. GET /dump/users ────────────────────▶ CREATE DATABASE _backfill_temp_*
-   (Bearer token)                        CREATE TABLE ... LIKE ...
-                                         INSERT INTO temp SELECT * FROM prod
-                                         UPDATE temp (sanitize via SQL)
-                                         DELETE excess rows (limits)
-                                         mysqldump temp.users
-                  ◀── streamed .sql ─── Stream SQL dump to client
-                                         DROP temp table
+── Phase 1: Download All ──────────────                                       
                                         
-3. Receive .sql file                    
+2. GET /dump/users ────────────────────▶ CREATE DATABASE _backfill_temp_*
+   GET /dump/orders                      CREATE TABLE ... LIKE ...
+   GET /dump/...                         INSERT INTO temp SELECT * FROM prod
+   (all tables downloaded first)         UPDATE temp (sanitize via SQL)
+                  ◀── streamed .sql ─── DELETE excess rows (limits)
+                                         DROP temp table
+
+── Phase 2: Schema Comparison ─────────
+                                        
+3. Compare remote columns vs local      
+   Schema::getColumnListing()           
+   Alert on mismatches before import    
+                                        
+── Phase 3: Import All ────────────────
+                                        
+4. For each downloaded .sql file:       
    mysql < users.sql                    
    (or PHP fallback for non-MySQL)      
-                                        
-4. Repeat for each table...             
                                         
 5. Record pull timestamp in             
    storage/backfill-state.json           
@@ -534,7 +564,7 @@ After your first full sync, subsequent runs use **delta mode** by default:
 
 **Limitations:**
 - **Deleted rows are not synced.** If a row was deleted on production, it will still exist locally after a delta sync. Use `--full` periodically to get a clean state.
-- **Schema changes are not synced.** If production adds a new column, run migrations locally first, then do a `--full` pull.
+- **Schema changes are not synced.** If production adds a new column, the pull command will detect the mismatch during schema comparison and warn you before importing. Run `php artisan migrate` locally first, then retry.
 
 ---
 
@@ -627,7 +657,7 @@ The scheduled job is **automatically registered** when `BACKFILL_SERVER_ENABLED=
 | Table has no primary key | Uses `id` column as fallback. If that doesn't exist either, the table is still synced but delta upserts won't work (use `--full`). |
 | Table has no timestamps | Delta sync falls back to full sync for that specific table. Other tables with timestamps still use delta. |
 | Deleted rows on production | **Not reflected** in delta sync. Use `--full` periodically for a clean state. |
-| Schema changes on production | Run migrations locally first, then `--full` pull. Column mismatches are handled gracefully — only matching columns are imported. |
+| Schema changes on production | The pull command automatically compares remote and local schemas before importing. If column mismatches are detected, you'll see a warning table and can choose to abort, run `php artisan migrate`, and retry. |
 | Very large tables (100M+ rows) | The `mysqldump` + `mysql` import path handles this well. Consider using row limits to cap development data size. |
 | Circular FK references | Detected and handled — cycles are broken in the topological sort. FK checks are disabled during import. |
 | Self-referencing tables | Supported (e.g., `categories.parent_id → categories.id`). Self-references are excluded from FK sorting. |

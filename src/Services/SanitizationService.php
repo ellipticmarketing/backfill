@@ -49,6 +49,7 @@ class SanitizationService
             'hash' => "'" . self::PASSWORD_HASH . "'",
             'null' => 'NULL',
             'address' => "CONCAT(`id`, ' Example St')",
+            'local_ip' => "CONCAT('192.168.', FLOOR(RAND() * 255), '.', FLOOR(RAND() * 255))",
             default => throw new \InvalidArgumentException("Unknown sanitization type: {$type}"),
         };
     }
