@@ -1,5 +1,5 @@
 {
-    "name": "elliptic/backfill",
+    "name": "ellipticmarketing/backfill",
     "description": "Pull a sanitized copy of your production database to local/staging environments",
     "keywords": [
         "elliptic",

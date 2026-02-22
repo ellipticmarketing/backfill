@@ -45,7 +45,7 @@ Production data is **never modified**. The package refuses to run destructive op
 Require the package via Composer:
 
 ```bash
-composer require elliptic/backfill
+composer require ellipticmarketing/backfill
 ```
 
 Laravel will auto-discover the service provider. No manual registration needed.

@@ -1,6 +1,6 @@
 ## Elliptic Backfill
 
-`elliptic/backfill` securely pulls a sanitized copy of a production database down to local/staging environments. It prevents accidental overwrites by refusing to run in production, and guarantees data privacy by sanitizing sensitive columns (emails, passwords, IPs) using pure SQL in a temporary database *before* streaming the dump.
+`ellipticmarketing/backfill` securely pulls a sanitized copy of a production database down to local/staging environments. It prevents accidental overwrites by refusing to run in production, and guarantees data privacy by sanitizing sensitive columns (emails, passwords, IPs) using pure SQL in a temporary database *before* streaming the dump.
 
 ### Environment Setup
 
