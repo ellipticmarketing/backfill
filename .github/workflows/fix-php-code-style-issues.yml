@@ -1,0 +1,39 @@
+name: Check & fix styling
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  php-code-styling:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: "Setup PHP"
+        uses: shivammathur/setup-php@v2
+        with:
+            php-version: "8.2"
+            extensions: json, dom, curl, libxml, mbstring
+            coverage: none
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Check code styling
+        run: vendor/bin/pint
+
+      - name: Commit checks
+        uses: stefanzweifel/git-auto-commit-action@v5
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        with:
+          commit_message: "style: Formatted PHP code via Laravel Pint"
