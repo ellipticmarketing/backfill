@@ -21,10 +21,6 @@ class InstallCommand extends Command
         'email_address' => 'email',
         'password' => 'hash',
         'password_hash' => 'hash',
-        'name' => 'name',
-        'first_name' => 'name',
-        'last_name' => 'name',
-        'full_name' => 'name',
         'phone' => 'phone',
         'phone_number' => 'phone',
         'mobile' => 'phone',
@@ -40,8 +36,8 @@ class InstallCommand extends Command
         'tax_id' => 'null',
         'credit_card' => 'null',
         'card_number' => 'null',
-        'ip_address' => 'text',
-        'last_login_ip' => 'text',
+        'ip_address' => 'local_ip',
+        'last_login_ip' => 'local_ip',
     ];
 
     public function handle(): int
@@ -50,22 +46,40 @@ class InstallCommand extends Command
         $this->components->info('Laravel Backfill — Setup');
         $this->newLine();
 
-        // Step 1: Generate a token
-        $token = Str::random(64);
+        // Step 1: Authentication Token
+        $existingToken = env('BACKFILL_TOKEN') ?: config('backfill.auth_token');
+        $token = $existingToken;
+        $envPath = base_path('.env');
 
-        $this->line("  Generated token:");
-        $this->newLine();
-        $this->line("  <fg=green>{$token}</>");
-        $this->newLine();
+        if ($existingToken) {
+            $this->components->info('A BACKFILL_TOKEN is already configured.');
+            if ($this->confirm('Would you like to configure a different token?', false)) {
+                $token = null;
+            }
+        }
+
+        if (! $token) {
+            $hasToken = $this->confirm('Do you already have a Backfill token? Select "no" if you want to generate a new one.', false);
+
+            if ($hasToken) {
+                $token = $this->ask('Please enter your BACKFILL_TOKEN');
+            } else {
+                $token = Str::random(64);
+                $this->line("  Generated token:");
+                $this->newLine();
+                $this->line("  <fg=green>{$token}</>");
+                $this->newLine();
+                $this->components->info('Use this token in all clients and the server.');
+                $this->newLine();
+            }
+        }
+
+        config(['backfill.auth_token' => trim($token)]);
 
         // Offer to write the token to .env
-        $envPath = base_path('.env');
-        $written = false;
-
-        if (file_exists($envPath)) {
+        if (file_exists($envPath) && env('BACKFILL_TOKEN') !== trim($token)) {
             if ($this->confirm('Add BACKFILL_TOKEN to your .env file?', true)) {
-                $this->writeToEnv($envPath, 'BACKFILL_TOKEN', $token);
-                $written = true;
+                $this->writeToEnv($envPath, 'BACKFILL_TOKEN', trim($token));
                 $this->components->info('Token written to .env');
             }
         }
@@ -77,18 +91,17 @@ class InstallCommand extends Command
         $this->line('  └─────────────────────────────────────────────────────┘');
         $this->newLine();
 
+        $defaultChoice = (app()->environment('production') || config('backfill.server.enabled')) ? 0 : 1;
         $envType = $this->choice(
             'Are you setting up Backfill on the Server (production) or Client (local/staging)?',
             ['Server', 'Client'],
-            app()->environment('production') ? 0 : 1
+            $defaultChoice
         );
 
         if ($envType === 'Server') {
             $this->setupServer($token, $envPath);
         } else {
             $this->setupClient($envPath);
-            // Re-read token from config/env since the user just pasted it in
-            $token = env('BACKFILL_TOKEN') ?: config('backfill.auth_token');
         }
 
         // Step 3: Publish config if it doesn't exist
@@ -112,9 +125,9 @@ class InstallCommand extends Command
         // Step 4: Gitignore the state file
         $this->addToGitignore();
 
-        // Step 5: Auto-suggest sanitization rules (client-side only, if source URL is configured)
-        if (app()->environment('local', 'staging')) {
-            $this->suggestSanitizationRules();
+        // Step 5: Auto-suggest sanitization rules
+        if (empty(config('backfill.sanitize'))) {
+            $this->suggestSanitizationRules($envType === 'Server');
         }
 
         // Step 6: Connection verification (client-side only)
@@ -149,54 +162,76 @@ class InstallCommand extends Command
     }
 
     /**
-     * Suggest sanitization rules by fetching the manifest and scanning column names.
+     * Suggest sanitization rules by fetching the manifest (client) or scanning the local schema (server).
      */
-    protected function suggestSanitizationRules(): void
+    protected function suggestSanitizationRules(bool $isServer): void
     {
-        $sourceUrl = config('backfill.client.source_url');
-        $token = config('backfill.auth_token');
-
-        if (! $sourceUrl || ! $token) {
-            return;
-        }
-
-        if (! $this->confirm('Scan the server for columns that may need sanitization?', true)) {
-            return;
-        }
-
-        $this->line('  Fetching schema from server...');
-
-        try {
-            $prefix = config('backfill.server.route_prefix', 'api/backfill');
-            $response = Http::withToken($token)
-                ->timeout(30)
-                ->get(rtrim($sourceUrl, '/') . "/{$prefix}/manifest");
-
-            if (! $response->successful()) {
-                $this->warn("  Could not reach server (HTTP {$response->status()}). Skipping.");
-
-                return;
-            }
-
-            $manifest = $response->json();
-        } catch (\Throwable $e) {
-            $this->warn("  Could not reach server: {$e->getMessage()}");
-
+        if (! $this->confirm('Scan the database for columns that may need sanitization?', true)) {
             return;
         }
 
         $suggestions = [];
-        $tables = $manifest['tables'] ?? [];
 
-        foreach ($tables as $tableName => $tableInfo) {
-            $columns = $tableInfo['columns'] ?? [];
+        if ($isServer) {
+            $this->line('  Scanning local database schema...');
 
-            foreach ($columns as $column) {
-                $colName = is_array($column) ? ($column['name'] ?? $column) : $column;
-                $colNameLower = strtolower($colName);
+            try {
+                $schemaService = app(\Elliptic\Backfill\Services\SchemaService::class);
+                $tablesList = $schemaService->getTables(config('backfill.exclude_tables', []));
 
-                if (isset($this->sensitiveColumns[$colNameLower])) {
-                    $suggestions[$tableName][$colName] = $this->sensitiveColumns[$colNameLower];
+                foreach ($tablesList as $tableName) {
+                    $columns = $schemaService->getColumns($tableName);
+                    foreach ($columns as $column) {
+                        $colNameLower = strtolower($column);
+                        if (isset($this->sensitiveColumns[$colNameLower])) {
+                            $suggestions[$tableName][$column] = $this->sensitiveColumns[$colNameLower];
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                $this->warn("  Could not scan local schema: {$e->getMessage()}");
+                return;
+            }
+        } else {
+            $sourceUrl = config('backfill.client.source_url');
+            $token = config('backfill.auth_token');
+
+            if (! $sourceUrl || ! $token) {
+                $this->warn('  Source URL or Token missing. Skipping remote scan.');
+                return;
+            }
+
+            $this->line('  Fetching schema from server...');
+
+            try {
+                $prefix = config('backfill.server.route_prefix', 'api/backfill');
+                $response = Http::withToken($token)
+                    ->timeout(30)
+                    ->get(rtrim($sourceUrl, '/') . "/{$prefix}/manifest");
+
+                if (! $response->successful()) {
+                    $this->warn("  Could not reach server (HTTP {$response->status()}). Skipping.");
+                    return;
+                }
+
+                $manifest = $response->json();
+            } catch (\Throwable $e) {
+                $this->warn("  Could not reach server: {$e->getMessage()}");
+                return;
+            }
+
+            $tables = $manifest['tables'] ?? [];
+
+            foreach ($tables as $tableName => $tableInfo) {
+                $columns = $tableInfo['columns'] ?? [];
+
+                foreach ($columns as $column) {
+                    $colName = is_array($column) ? ($column['name'] ?? $column) : $column;
+                    $colNameLower = strtolower($colName);
+
+                    if (isset($this->sensitiveColumns[$colNameLower])) {
+                        $suggestions[$tableName][$colName] = $this->sensitiveColumns[$colNameLower];
+                    }
                 }
             }
         }
@@ -321,7 +356,7 @@ class InstallCommand extends Command
         $this->line('  <fg=green>BACKFILL_SERVER_ENABLED=true</>');
         $this->newLine();
 
-        if (file_exists($envPath)) {
+        if (file_exists($envPath) && ! env('BACKFILL_SERVER_ENABLED')) {
             $this->writeToEnv($envPath, 'BACKFILL_SERVER_ENABLED', 'true');
             $this->components->info('BACKFILL_SERVER_ENABLED=true written to .env');
         }
@@ -347,25 +382,19 @@ class InstallCommand extends Command
             return;
         }
 
-        $sourceUrl = $this->ask('What is the production URL? (e.g. https://myapp.com)');
-        $serverToken = $this->ask('Paste the BACKFILL_TOKEN generated on the server');
+        $existingUrl = env('BACKFILL_SOURCE_URL') ?: config('backfill.client.source_url');
+        $sourceUrl = $this->ask('What is the production URL? (e.g. https://myapp.com)', $existingUrl);
 
         if ($sourceUrl) {
-            $this->writeToEnv($envPath, 'BACKFILL_SOURCE_URL', trim($sourceUrl));
+            $sourceUrl = trim($sourceUrl);
+            config(['backfill.client.source_url' => $sourceUrl]);
+            
+            if (env('BACKFILL_SOURCE_URL') !== $sourceUrl) {
+                $this->writeToEnv($envPath, 'BACKFILL_SOURCE_URL', $sourceUrl);
+                $this->components->info('Client configuration written to .env');
+                $this->newLine();
+            }
         }
-
-        if ($serverToken) {
-            $this->writeToEnv($envPath, 'BACKFILL_TOKEN', trim($serverToken));
-            // Update the runtime config so subsequent steps (like connection testing) use the new token
-            config(['backfill.auth_token' => trim($serverToken)]);
-        }
-        
-        if ($sourceUrl) {
-            config(['backfill.client.source_url' => trim($sourceUrl)]);
-        }
-
-        $this->components->info('Client configuration written to .env');
-        $this->newLine();
 
         $this->line('  You can now run:');
         $this->newLine();

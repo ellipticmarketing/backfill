@@ -8,6 +8,7 @@ use Elliptic\Backfill\Services\SyncState;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Schema;
 
 class PullCommand extends Command
 {
@@ -137,9 +138,89 @@ class PullCommand extends Command
             return self::SUCCESS;
         }
 
-        // Create a temp directory for SQL dump files
-        $tempDir = storage_path('app/backfill-' . time());
-        File::ensureDirectoryExists($tempDir);
+        // ──────────────────────────────────────────────────
+        // Phase 1: Download all dumps
+        // ──────────────────────────────────────────────────
+
+        $tempDir = $this->resolveDownloadDirectory($tableOrder, $tableInfo);
+
+        if ($tempDir === null) {
+            // User chose to resume — find the existing directory
+            $tempDir = $this->findRecentDownloadDir();
+        } else {
+            $this->newLine();
+            $this->info('📥 Phase 1: Downloading all tables...');
+            $this->newLine();
+
+            $downloadBar = $this->output->createProgressBar($totalTables);
+            $downloadBar->setFormat(' %current%/%max% [%bar%] %message%');
+            $downloadBar->start();
+
+            foreach ($tableOrder as $table) {
+                $info = $tableInfo[$table] ?? [];
+                $downloadBar->setMessage("Downloading {$table}...");
+                $downloadBar->display();
+
+                try {
+                    $after = ($isDelta && ($info['has_timestamps'] ?? false)) ? $lastSync : null;
+                    $client->downloadTableDump($table, $tempDir, $after);
+                } catch (\Throwable $e) {
+                    $this->newLine();
+                    $this->error("Error downloading {$table}: {$e->getMessage()}");
+                }
+
+                $downloadBar->advance();
+            }
+
+            $downloadBar->setMessage('Downloads complete!');
+            $downloadBar->finish();
+            $this->newLine(2);
+
+            // Save a timestamp marker so we can detect this download later
+            file_put_contents($tempDir . DIRECTORY_SEPARATOR . '.backfill-meta.json', json_encode([
+                'downloaded_at' => now()->toIso8601String(),
+                'mode' => $mode,
+                'table_order' => $tableOrder,
+                'table_info' => $tableInfo,
+            ], JSON_PRETTY_PRINT));
+        }
+
+        // ──────────────────────────────────────────────────
+        // Phase 2: Schema comparison
+        // ──────────────────────────────────────────────────
+
+        $schemaDiffs = $this->compareSchemas($tableOrder, $tableInfo);
+
+        if (! empty($schemaDiffs)) {
+            $this->newLine();
+            $this->components->warn('Schema differences detected between the server and local database:');
+            $this->newLine();
+
+            $this->table(
+                ['Table', 'Issue'],
+                array_map(fn ($diff) => [$diff['table'], $diff['issue']], $schemaDiffs)
+            );
+
+            $this->newLine();
+            $this->line('  <fg=yellow>These differences may cause import errors.</> Review and resolve them,');
+            $this->line('  or run <fg=white>php artisan migrate</> first.');
+            $this->newLine();
+
+            if (! $this->confirm('Continue importing despite schema differences?', false)) {
+                $this->info('Import cancelled. Downloaded data is preserved at:');
+                $this->line("  <fg=white>{$tempDir}</>");
+
+                return self::SUCCESS;
+            }
+        }
+
+        // ──────────────────────────────────────────────────
+        // Phase 3: Import all dumps
+        // ──────────────────────────────────────────────────
+
+        $this->newLine();
+        $this->info('📦 Phase 2: Importing tables...');
+        $this->newLine();
 
         // Record start
         $startedAt = Carbon::now();
@@ -147,47 +228,40 @@ class PullCommand extends Command
 
         $totalRowsSynced = 0;
         $syncedTables = [];
-        $progressBar = $this->output->createProgressBar($totalTables);
-        $progressBar->setFormat(' %current%/%max% [%bar%] %message%');
-        $progressBar->start();
 
-        foreach ($tableOrder as $table) {
+        // Determine which tables actually have downloaded dump files
+        $importableTables = array_filter($tableOrder, function ($table) use ($tempDir) {
+            return file_exists($tempDir . DIRECTORY_SEPARATOR . "{$table}.sql");
+        });
+
+        $importBar = $this->output->createProgressBar(count($importableTables));
+        $importBar->setFormat(' %current%/%max% [%bar%] %message%');
+        $importBar->start();
+
+        foreach ($importableTables as $table) {
             $info = $tableInfo[$table] ?? [];
-            $progressBar->setMessage("Downloading {$table}...");
-            $progressBar->display();
+            $dumpPath = $tempDir . DIRECTORY_SEPARATOR . "{$table}.sql";
+
+            $importBar->setMessage("Importing {$table}...");
+            $importBar->display();
 
             try {
-                // Download the SQL dump from the server
-                $after = ($isDelta && ($info['has_timestamps'] ?? false)) ? $lastSync : null;
-                $result = $client->downloadTableDump($table, $tempDir, $after);
-
-                $dumpPath = $result['path'];
-
-                // Determine if this specific table should use delta mode
                 $tableIsDelta = $isDelta && ($info['has_timestamps'] ?? false);
-
-                $progressBar->setMessage("Importing {$table}...");
-                $progressBar->display();
-
-                // Import the SQL dump
                 $rowCount = $importer->importSqlDump($table, $dumpPath, $tableIsDelta);
 
                 $totalRowsSynced += $rowCount;
                 $syncedTables[$table] = $rowCount;
-
-                // Clean up the dump file immediately
-                @unlink($dumpPath);
             } catch (\Throwable $e) {
                 $this->newLine();
-                $this->error("Error syncing {$table}: {$e->getMessage()}");
+                $this->error("Error importing {$table}: {$e->getMessage()}");
                 $syncedTables[$table] = 'error: ' . $e->getMessage();
             }
 
-            $progressBar->advance();
+            $importBar->advance();
         }
 
-        $progressBar->setMessage('Done!');
-        $progressBar->finish();
+        $importBar->setMessage('Done!');
+        $importBar->finish();
         $this->newLine(2);
 
         // Clean up temp directory
@@ -210,6 +284,132 @@ class PullCommand extends Command
         );
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Check for a recent download directory (within 24 hours).
+     * If found, ask the user whether to resume or start fresh.
+     * Returns the new temp directory path, or null if user chose to resume.
+     */
+    protected function resolveDownloadDirectory(array $tableOrder, array $tableInfo): ?string
+    {
+        $existing = $this->findRecentDownloadDir();
+
+        if ($existing) {
+            $metaFile = $existing . DIRECTORY_SEPARATOR . '.backfill-meta.json';
+            $meta = json_decode(file_get_contents($metaFile), true);
+            $downloadedAt = Carbon::parse($meta['downloaded_at']);
+            $age = $downloadedAt->diffForHumans(now(), true);
+
+            $dumpFileCount = count(glob($existing . DIRECTORY_SEPARATOR . '*.sql'));
+
+            $this->newLine();
+            $this->components->info("Found a recent download from {$age} ago with {$dumpFileCount} table dumps.");
+
+            $choice = $this->choice(
+                'Would you like to resume importing the existing data or download a fresh copy?',
+                ['Resume existing download', 'Download fresh data'],
+                0
+            );
+
+            if ($choice === 'Resume existing download') {
+                return null; // signal to use the existing dir
+            }
+
+            // User wants fresh data — clean up the old download
+            File::deleteDirectory($existing);
+        }
+
+        $newDir = storage_path('app/backfill-' . time());
+        File::ensureDirectoryExists($newDir);
+
+        return $newDir;
+    }
+
+    /**
+     * Find the most recent backfill download directory that is less than 24 hours old.
+     */
+    protected function findRecentDownloadDir(): ?string
+    {
+        $appDir = storage_path('app');
+
+        if (! is_dir($appDir)) {
+            return null;
+        }
+
+        $dirs = glob($appDir . '/backfill-*', GLOB_ONLYDIR);
+
+        if (empty($dirs)) {
+            return null;
+        }
+
+        // Sort descending by name (timestamp-based) to get the most recent
+        rsort($dirs);
+
+        foreach ($dirs as $dir) {
+            $metaFile = $dir . DIRECTORY_SEPARATOR . '.backfill-meta.json';
+
+            if (! file_exists($metaFile)) {
+                continue;
+            }
+
+            $meta = json_decode(file_get_contents($metaFile), true);
+            $downloadedAt = Carbon::parse($meta['downloaded_at'] ?? '2000-01-01');
+
+            if ($downloadedAt->diffInHours(now()) < 24) {
+                return $dir;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Compare the remote schema (from manifest) with the local database schema.
+     * Returns an array of differences: [['table' => ..., 'issue' => ...], ...]
+     */
+    protected function compareSchemas(array $tableOrder, array $tableInfo): array
+    {
+        $diffs = [];
+
+        foreach ($tableOrder as $table) {
+            $remoteColumns = $tableInfo[$table]['columns'] ?? [];
+
+            // Normalize remote column names
+            $remoteColumnNames = array_map(function ($col) {
+                return is_array($col) ? ($col['name'] ?? $col) : $col;
+            }, $remoteColumns);
+
+            // Check if the table exists locally
+            if (! Schema::hasTable($table)) {
+                $diffs[] = [
+                    'table' => $table,
+                    'issue' => 'Table does not exist locally',
+                ];
+                continue;
+            }
+
+            $localColumns = Schema::getColumnListing($table);
+
+            $missingLocally = array_diff($remoteColumnNames, $localColumns);
+            $extraLocally = array_diff($localColumns, $remoteColumnNames);
+
+            if (! empty($missingLocally)) {
+                $diffs[] = [
+                    'table' => $table,
+                    'issue' => 'Columns on server but missing locally: ' . implode(', ', $missingLocally),
+                ];
+            }
+
+            if (! empty($extraLocally)) {
+                $diffs[] = [
+                    'table' => $table,
+                    'issue' => 'Columns local but missing on server: ' . implode(', ', $extraLocally),
+                ];
+            }
+        }
+
+        return $diffs;
     }
 
     /**

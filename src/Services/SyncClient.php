@@ -52,16 +52,18 @@ class SyncClient
 
         $url = $this->url("dump/{$table}");
 
-        // Stream the response directly to a temp file to keep memory flat
+        // Stream to a temp file, then extract meta and write clean SQL to the final path.
+        // This avoids rename() which fails on Windows due to file locking.
         $filePath = $destDir . DIRECTORY_SEPARATOR . "{$table}.sql";
+        $tempPath = $filePath . '.tmp';
 
         $response = $this->request()
             ->timeout($this->timeout)
-            ->withOptions(['sink' => $filePath])
+            ->withOptions(['sink' => $tempPath])
             ->get($url, $params);
 
         if (! $response->successful()) {
-            @unlink($filePath);
+            @unlink($tempPath);
 
             throw new RuntimeException(
                 "Failed to download dump for '{$table}': HTTP {$response->status()}"
@@ -69,7 +71,10 @@ class SyncClient
         }
 
         // The first line of the file is JSON metadata, extract it
-        $meta = $this->extractMetaFromDump($filePath);
+        $meta = $this->extractMetaFromDump($tempPath, $filePath);
+
+        // Clean up the temp download
+        @unlink($tempPath);
 
         return [
             'path' => $filePath,
@@ -78,12 +83,12 @@ class SyncClient
     }
 
     /**
-     * Extract the JSON metadata line from the top of a dump file,
-     * then rewrite the file without it (clean SQL only).
+     * Extract the JSON metadata line from a downloaded dump file,
+     * and write clean SQL (without the meta header) to the final destination.
      */
-    protected function extractMetaFromDump(string $filePath): array
+    protected function extractMetaFromDump(string $sourcePath, string $destPath): array
     {
-        $handle = fopen($filePath, 'r');
+        $handle = fopen($sourcePath, 'r');
         if (! $handle) {
             return [];
         }
@@ -95,19 +100,15 @@ class SyncClient
 
         $meta = json_decode(trim($metaLine), true) ?? [];
 
-        // Rewrite the file without the first two lines
-        $tempPath = $filePath . '.tmp';
-        $tempHandle = fopen($tempPath, 'w');
+        // Write the remaining SQL content to the final destination
+        $destHandle = fopen($destPath, 'w');
 
         while (($line = fgets($handle)) !== false) {
-            fwrite($tempHandle, $line);
+            fwrite($destHandle, $line);
         }
 
         fclose($handle);
-        fclose($tempHandle);
-
-        // Replace original with cleaned version
-        rename($tempPath, $filePath);
+        fclose($destHandle);
 
         return $meta;
     }
