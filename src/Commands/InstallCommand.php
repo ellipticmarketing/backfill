@@ -127,7 +127,7 @@ class InstallCommand extends Command
 
         // Step 5: Auto-suggest sanitization rules
         if (empty(config('backfill.sanitize'))) {
-            $this->suggestSanitizationRules($envType === 'Server');
+            $this->suggestSanitizationRules();
         }
 
         // Step 6: Connection verification (client-side only)
@@ -162,17 +162,23 @@ class InstallCommand extends Command
     }
 
     /**
-     * Suggest sanitization rules by fetching the manifest (client) or scanning the local schema (server).
+     * Suggest sanitization rules by fetching the manifest from the server or scanning the local schema.
      */
-    protected function suggestSanitizationRules(bool $isServer): void
+    protected function suggestSanitizationRules(): void
     {
         if (! $this->confirm('Scan the database for columns that may need sanitization?', true)) {
             return;
         }
 
+        $scanSource = $this->choice(
+            'Where should we scan for sanitization columns?',
+            ['Local', 'Server'],
+            0
+        );
+
         $suggestions = [];
 
-        if ($isServer) {
+        if ($scanSource === 'Local') {
             $this->line('  Scanning local database schema...');
 
             try {
