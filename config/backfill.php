@@ -35,6 +35,10 @@ return [
         // 'tables'   = create temporary tables in the same database (less privileges needed)
         'temp_strategy' => env('BACKFILL_TEMP_STRATEGY', 'database'),
 
+        // The name of the temporary database to create if using 'database' strategy.
+        // If null, a random name like '_backfill_temp_123...' is generated.
+        'temp_database' => env('BACKFILL_TEMP_DATABASE'),
+
         // Alternate DB credentials for temp database operations.
         // If your app's DB user lacks CREATE/DROP DATABASE privileges,
         // set these to a user that does. Leave null to use the default connection.

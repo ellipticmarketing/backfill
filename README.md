@@ -153,6 +153,7 @@ A shared secret token used for all communication between server and client. This
     'route_prefix' => 'api/backfill',
     'middleware' => [],
     'temp_strategy' => env('BACKFILL_TEMP_STRATEGY', 'database'),
+    'temp_database' => env('BACKFILL_TEMP_DATABASE'),
     'temp_username' => env('BACKFILL_TEMP_USERNAME'),
     'temp_password' => env('BACKFILL_TEMP_PASSWORD'),
     'chunk_size' => 5000,
@@ -165,6 +166,7 @@ A shared secret token used for all communication between server and client. This
 | `route_prefix` | `api/backfill` | URL prefix for the sync endpoints. Endpoints are `GET /{prefix}/manifest` and `GET /{prefix}/dump/{table}` |
 | `middleware` | `[]` | Additional middleware to apply to sync routes (on top of `api` and token auth) |
 | `temp_strategy` | `database` | How temporary data is stored during sanitization. See [Temporary Database Strategy](#temporary-database-strategy) |
+| `temp_database` | `null` | The name of the temporary database to create if using 'database' strategy. If null, a random name is generated. |
 | `temp_username` | `null` | Alternate DB username for temp operations (if your app user can't create databases). See [Alternate Database Credentials](#alternate-database-credentials) |
 | `temp_password` | `null` | Password for the alternate DB user |
 | `chunk_size` | `5000` | Number of rows read per chunk when building the SQL dump |
@@ -491,6 +493,13 @@ Local (Client)                          Production (Server)
 5. Record pull timestamp in             
    storage/backfill-state.json           
 ```
+
+### Error Handling & Troubleshooting
+
+When pulling data from the server, errors are handled gracefully and presented clearly to the client:
+
+- **500 Server Errors**: If a database privilege issue or other exception occurs during temp database setup, the server catches the exception and returns the exact error as JSON. The local client reads this JSON and outputs the clear error message, rather than a raw HTML stack trace.
+- **404 Not Found Handling**: If the remote server returns a `404` (often due to missing package installation, missing `BACKFILL_SERVER_ENABLED=true`, or an incorrect routing configuration), the client will automatically suggest actionable recommendations to resolve the issue.
 
 ### Temporary Database Strategy
 

@@ -36,10 +36,10 @@ class DumpController
 
         $after = $request->input('after'); // ISO 8601 timestamp for delta sync
 
-        // Prepare: copy → sanitize → limit, all in a temp space
-        $tempDb->prepare($table);
-
         try {
+            // Prepare: copy → sanitize → limit, all in a temp space
+            $tempDb->prepare($table);
+
             // Apply sanitization rules via SQL UPDATE
             $sanitizeRules = config("backfill.sanitize.{$table}", []);
             if (! empty($sanitizeRules)) {
@@ -101,9 +101,15 @@ class DumpController
                 'Content-Disposition' => "attachment; filename=\"{$table}.sql\"",
             ]);
         } catch (\Throwable $e) {
-            $tempDb->cleanup($table);
+            try {
+                $tempDb->cleanup($table);
+            } catch (\Throwable $cleanupException) {
+                // Ignore cleanup errors during an existing error
+            }
 
-            throw $e;
+            return response()->json([
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
 

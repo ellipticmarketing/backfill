@@ -31,9 +31,22 @@ class SyncClient
             ->get($this->url('manifest'));
 
         if (! $response->successful()) {
-            throw new RuntimeException(
-                "Failed to fetch manifest: HTTP {$response->status()} — {$response->body()}"
-            );
+            $url = $this->url('manifest');
+            $body = $response->json('error') ?? $response->body();
+            // Since HTML bodies can be huge, limit the text if it's not a parsed error
+            if (! is_string($body)) {
+                $body = json_encode($body);
+            } elseif (! $response->json('error')) {
+                $body = substr($body, 0, 500);
+            }
+
+            $message = "Failed to fetch manifest from [{$url}]: HTTP {$response->status()} — {$body}";
+
+            if ($response->status() === 404) {
+                $message .= "\n\nRecommendations:\n - Is the elliptic/backfill package installed on the remote server?\n - Make sure the BACKFILL_TOKEN env variable is set and matches on both ends.\n - Make sure BACKFILL_SERVER_ENABLED=true is set on the remote server's .env file.";
+            }
+
+            throw new \RuntimeException($message);
         }
 
         return $response->json();
@@ -63,11 +76,21 @@ class SyncClient
             ->get($url, $params);
 
         if (! $response->successful()) {
+            $errorMessage = '';
+            if (file_exists($tempPath)) {
+                $body = file_get_contents($tempPath);
+                $json = json_decode($body, true);
+                $errorMessage = isset($json['error']) ? " — {$json['error']}" : ($body ? " — " . substr($body, 0, 500) : '');
+            }
             @unlink($tempPath);
 
-            throw new RuntimeException(
-                "Failed to download dump for '{$table}': HTTP {$response->status()}"
-            );
+            $message = "Failed to download dump for '{$table}': HTTP {$response->status()}{$errorMessage}";
+
+            if ($response->status() === 404) {
+                $message .= "\n\nRecommendations:\n - Is the elliptic/backfill package installed on the remote server?\n - Make sure the BACKFILL_TOKEN env variable is set and matches on both ends.\n - Make sure BACKFILL_SERVER_ENABLED=true is set on the remote server's .env file.";
+            }
+
+            throw new \RuntimeException($message);
         }
 
         // The first line of the file is JSON metadata, extract it

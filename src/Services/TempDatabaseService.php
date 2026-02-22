@@ -12,6 +12,10 @@ class TempDatabaseService
 
     protected array $tempTables = [];
 
+    protected array $preparedDatabaseTables = [];
+
+    protected bool $shouldDropTempDatabase = true;
+
     protected string $strategy;
 
     protected string $sourceDatabase;
@@ -140,15 +144,24 @@ class TempDatabaseService
             if ($this->tempDatabase) {
                 $this->db()->statement("DROP TABLE IF EXISTS `{$this->tempDatabase}`.`{$table}`");
 
-                // Check if the temp database is now empty and drop it
-                $remaining = $this->db()->select(
-                    'SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?',
-                    [$this->tempDatabase]
-                );
+                $key = array_search($table, $this->preparedDatabaseTables);
+                if ($key !== false) {
+                    unset($this->preparedDatabaseTables[$key]);
+                }
 
-                if (($remaining[0]->count ?? 0) === 0) {
-                    $this->db()->statement("DROP DATABASE IF EXISTS `{$this->tempDatabase}`");
-                    $this->tempDatabase = null;
+                if ($this->shouldDropTempDatabase) {
+                    // Check if the temp database is now empty and drop it
+                    $remaining = $this->db()->select(
+                        'SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?',
+                        [$this->tempDatabase]
+                    );
+
+                    if (($remaining[0]->count ?? 0) === 0) {
+                        try {
+                            $this->db()->statement("DROP DATABASE IF EXISTS `{$this->tempDatabase}`");
+                        } catch (\Throwable $e) {}
+                        $this->tempDatabase = null;
+                    }
                 }
             }
         } else {
@@ -164,8 +177,19 @@ class TempDatabaseService
     public function cleanupAll(): void
     {
         if ($this->strategy === 'database' && $this->tempDatabase) {
-            $this->db()->statement("DROP DATABASE IF EXISTS `{$this->tempDatabase}`");
-            $this->tempDatabase = null;
+            if ($this->shouldDropTempDatabase) {
+                try {
+                    $this->db()->statement("DROP DATABASE IF EXISTS `{$this->tempDatabase}`");
+                } catch (\Throwable $e) {}
+                $this->tempDatabase = null;
+            } else {
+                foreach ($this->preparedDatabaseTables as $table) {
+                    try {
+                        $this->db()->statement("DROP TABLE IF EXISTS `{$this->tempDatabase}`.`{$table}`");
+                    } catch (\Throwable $e) {}
+                }
+                $this->preparedDatabaseTables = [];
+            }
         }
 
         foreach (array_keys($this->tempTables) as $table) {
@@ -180,6 +204,8 @@ class TempDatabaseService
     protected function prepareWithDatabase(string $table): void
     {
         $this->ensureTempDatabase();
+
+        $this->preparedDatabaseTables[] = $table;
 
         // Create the table structure and copy data
         $this->db()->statement(
@@ -196,14 +222,29 @@ class TempDatabaseService
             return;
         }
 
-        $this->tempDatabase = '_backfill_temp_' . time() . '_' . mt_rand(1000, 9999);
+        $configuredName = config('backfill.server.temp_database');
+
+        if ($configuredName) {
+            $this->tempDatabase = $configuredName;
+            $this->shouldDropTempDatabase = false;
+        } else {
+            $this->tempDatabase = '_backfill_temp_' . time() . '_' . mt_rand(1000, 9999);
+            $this->shouldDropTempDatabase = true;
+        }
 
         try {
-            $this->db()->statement("CREATE DATABASE `{$this->tempDatabase}`");
+            $exists = $this->db()->select(
+                'SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?',
+                [$this->tempDatabase]
+            );
+
+            if (empty($exists)) {
+                $this->db()->statement("CREATE DATABASE `{$this->tempDatabase}`");
+            }
         } catch (\Throwable $e) {
             throw new RuntimeException(
-                "Failed to create temporary database '{$this->tempDatabase}'. "
-                . 'Ensure the database user has CREATE DATABASE privileges '
+                "Failed to create or access temporary database '{$this->tempDatabase}'. "
+                . 'Ensure the database user has access or CREATE DATABASE privileges '
                 . '(you can configure alternate credentials via BACKFILL_TEMP_USERNAME / BACKFILL_TEMP_PASSWORD), '
                 . "or set backfill.server.temp_strategy to 'tables'. "
                 . "Original error: {$e->getMessage()}"
