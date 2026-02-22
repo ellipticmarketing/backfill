@@ -21,7 +21,7 @@ class DumpController
         TempDatabaseService $tempDb,
         SanitizationService $sanitizer,
         RowLimiterService $limiter,
-    ): StreamedResponse {
+    ): \Symfony\Component\HttpFoundation\Response {
         $excludedTables = config('backfill.exclude_tables', []);
 
         if (in_array($table, $excludedTables)) {
