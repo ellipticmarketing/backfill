@@ -80,7 +80,7 @@ class PullCommand extends Command
         $this->info('📋 Fetching manifest from server...');
 
         try {
-            $manifest = $client->getManifest();
+            $manifest = $client->getManifest($lastSync);
         } catch (\Throwable $e) {
             $this->error("Failed to fetch manifest: {$e->getMessage()}");
 
@@ -106,10 +106,13 @@ class PullCommand extends Command
         $tableOrder = array_values(array_filter($tableOrder, fn ($t) => $t !== 'BACKFILL_logs'));
 
         $totalTables = count($tableOrder);
-        $totalRows = array_sum(array_map(fn ($t) => $tableInfo[$t]['row_count'] ?? 0, $tableOrder));
+        $totalRows = array_sum(array_map(function ($t) use ($tableInfo) {
+            $info = $tableInfo[$t] ?? [];
+            return isset($info['delta_count']) ? $info['delta_count'] : ($info['row_count'] ?? 0);
+        }, $tableOrder));
 
         $this->info("   Tables: {$totalTables}");
-        $this->info("   Estimated rows: " . number_format($totalRows));
+        $this->info("   Estimated rows to sync: " . number_format($totalRows));
 
         if ($isDryRun) {
             $this->newLine();
@@ -119,9 +122,10 @@ class PullCommand extends Command
             $tableData = [];
             foreach ($tableOrder as $table) {
                 $info = $tableInfo[$table] ?? [];
+                $tableRows = isset($info['delta_count']) ? $info['delta_count'] : ($info['row_count'] ?? 0);
                 $tableData[] = [
                     $table,
-                    number_format($info['row_count'] ?? 0),
+                    number_format($tableRows),
                     ($info['has_sanitization'] ?? false) ? '✓' : '',
                     ($info['has_limit'] ?? false) ? '✓' : '',
                     ($info['has_timestamps'] ?? false) ? '✓' : '',
@@ -134,7 +138,7 @@ class PullCommand extends Command
         }
 
         // Confirm with the user
-        if (! $this->confirm("Proceed with {$mode} sync of {$totalTables} tables?", true)) {
+        if (! $isDelta && ! $this->confirm("Proceed with {$mode} sync of {$totalTables} tables?", true)) {
             $this->info('Cancelled.');
 
             return self::SUCCESS;
@@ -160,11 +164,21 @@ class PullCommand extends Command
 
             foreach ($tableOrder as $table) {
                 $info = $tableInfo[$table] ?? [];
+                
+                $isDeltaTable = $isDelta && ($info['has_timestamps'] ?? false);
+                $after = $isDeltaTable ? $lastSync : null;
+
+                if ($isDeltaTable && isset($info['delta_count']) && $info['delta_count'] === 0) {
+                    $downloadBar->advance();
+                    // we can't emit info text inside progress bar easily without breaking it, 
+                    // so we just advance and continue.
+                    continue;
+                }
+
                 $downloadBar->setMessage("Downloading {$table}...");
                 $downloadBar->display();
 
                 try {
-                    $after = ($isDelta && ($info['has_timestamps'] ?? false)) ? $lastSync : null;
                     $client->downloadTableDump($table, $tempDir, $after);
                 } catch (\Throwable $e) {
                     $this->newLine();
@@ -250,6 +264,10 @@ class PullCommand extends Command
             try {
                 $tableIsDelta = $isDelta && ($info['has_timestamps'] ?? false);
                 $rowCount = $importer->importSqlDump($table, $dumpPath, $tableIsDelta);
+                
+                if ($tableIsDelta && isset($info['delta_count'])) {
+                    $rowCount = $info['delta_count'];
+                }
 
                 $totalRowsSynced += $rowCount;
                 $syncedTables[$table] = $rowCount;
@@ -264,6 +282,16 @@ class PullCommand extends Command
 
         $importBar->setMessage('Done!');
         $importBar->finish();
+        
+        // Add skipped delta tables to synced tables as 0 rows
+        foreach ($tableOrder as $table) {
+            $info = $tableInfo[$table] ?? [];
+            $tableIsDelta = $isDelta && ($info['has_timestamps'] ?? false);
+            if (! isset($syncedTables[$table]) && $tableIsDelta && isset($info['delta_count']) && $info['delta_count'] === 0) {
+                $syncedTables[$table] = 0;
+            }
+        }
+        
         $this->newLine(2);
 
         // Clean up temp directory

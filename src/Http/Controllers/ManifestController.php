@@ -26,17 +26,28 @@ class ManifestController
 
             $manifest = [];
 
+            $after = $request->query('after');
+
             foreach ($sorted as $table) {
                 $columns = $schema->getColumns($table);
                 $primaryKey = $schema->getPrimaryKey($table);
                 $hasTimestamps = $schema->hasTimestamps($table);
                 $rowCount = $schema->getRowCount($table);
 
+                $deltaCount = null;
+                if ($after && $hasTimestamps) {
+                    $deltaCount = \Illuminate\Support\Facades\DB::table($table)
+                        ->where('updated_at', '>=', $after)
+                        ->orWhere('created_at', '>=', $after)
+                        ->count();
+                }
+
                 $manifest[$table] = [
                     'columns' => $columns,
                     'primary_key' => $primaryKey,
                     'has_timestamps' => $hasTimestamps,
                     'row_count' => $rowCount,
+                    'delta_count' => $deltaCount,
                     'has_limit' => isset(config('backfill.limits', [])[$table]),
                     'has_sanitization' => isset(config('backfill.sanitize', [])[$table]),
                 ];

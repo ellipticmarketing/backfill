@@ -25,10 +25,15 @@ class SyncClient
     /**
      * Fetch the manifest from the server.
      */
-    public function getManifest(): array
+    public function getManifest(?string $after = null): array
     {
+        $params = [];
+        if ($after) {
+            $params['after'] = $after;
+        }
+
         $response = $this->request()
-            ->get($this->url('manifest'));
+            ->get($this->url('manifest'), $params);
 
         if (! $response->successful()) {
             $url = $this->url('manifest');
