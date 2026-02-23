@@ -328,6 +328,8 @@ The main command. Pulls sanitized data from the production server.
 
 ```
 php artisan backfill:pull [options]
+# Or simply
+php artisan backfill [options]
 ```
 
 | Option | Description |

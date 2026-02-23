@@ -9,6 +9,15 @@ it('blocks pull on non-allowed environments', function () {
         ->assertExitCode(1);
 });
 
+it('supports backfill as an alias for backfill:pull', function () {
+    config(['backfill.client.allowed_environments' => ['local', 'staging']]);
+    app()->detectEnvironment(fn () => 'production');
+
+    $this->artisan('backfill')
+        ->expectsOutputToContain('only allowed')
+        ->assertExitCode(1);
+});
+
 it('shows status with no sync history', function () {
     $this->artisan('backfill:status')
         ->expectsOutputToContain('No sync history found')

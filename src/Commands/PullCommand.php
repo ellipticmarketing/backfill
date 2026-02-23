@@ -17,6 +17,8 @@ class PullCommand extends Command
         {--tables= : Comma-separated list of specific tables to sync}
         {--dry-run : Show what would be synced without making changes}';
 
+    protected $aliases = ['backfill'];
+
     protected $description = 'Pull a sanitized copy of the production database to this environment';
 
     public function handle(SyncClient $client, ImportService $importer, SyncState $state): int

@@ -101,7 +101,7 @@ class InstallCommand extends Command
         if ($envType === 'Server') {
             $this->setupServer($token, $envPath);
         } else {
-            $this->setupClient($envPath);
+            $this->setupClient($token, $envPath);
         }
 
         // Step 3: Publish config if it doesn't exist
@@ -377,7 +377,7 @@ class InstallCommand extends Command
         $this->line('  <fg=green>BACKFILL_TEMP_STRATEGY=tables</>');
     }
 
-    protected function setupClient(string $envPath): void
+    protected function setupClient(string $token, string $envPath): void
     {
         $this->components->twoColumnDetail('<fg=yellow>Client (Local/Staging)</>', 'This pulls data from production');
         $this->newLine();
@@ -401,7 +401,18 @@ class InstallCommand extends Command
             }
         }
 
-        $this->line('  You can now run:');
+        $this->line('  <fg=yellow>Important: Server Setup Required</>');
+        $this->line('  Before running the pull command, ensure the server is configured:');
+        $this->newLine();
+        $this->line('  1. Create a temporary database on your server (e.g., <fg=white>backfill_temp</>).');
+        $this->line('  2. Add the following to your server\'s <fg=white>.env</> file:');
+        $this->newLine();
+        $this->line('  <fg=green>BACKFILL_SERVER_ENABLED=true</>');
+        $this->line('  <fg=green>BACKFILL_TEMP_DATABASE=backfill_temp</>');
+        $this->line("  <fg=green>BACKFILL_TOKEN={$token}</>");
+        $this->newLine();
+
+        $this->line('  Once the server is configured, you can run:');
         $this->newLine();
         $this->line('  <fg=white>php artisan backfill:pull --full</>     First sync');
         $this->line('  <fg=white>php artisan backfill:pull</>            Incremental sync');
