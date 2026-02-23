@@ -26,7 +26,7 @@ class CleanupCommand extends Command
             return self::SUCCESS;
         }
 
-        $this->warn('Found ' . count($stale) . ' orphaned temp database(s):');
+        $this->warn('Found '.count($stale).' orphaned temp database(s):');
         foreach ($stale as $db) {
             $age = now()->diffForHumans(\Carbon\Carbon::createFromTimestamp($db['timestamp']), true);
             $this->line("   • {$db['name']} (created ~{$age} ago)");
@@ -94,7 +94,7 @@ class CleanupCommand extends Command
      */
     protected function cleanupTempTables(string $connection): void
     {
-        $database = config('database.connections.' . config('database.default') . '.database');
+        $database = config('database.connections.'.config('database.default').'.database');
 
         $tables = DB::connection($connection)->select(
             'SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME LIKE ?',

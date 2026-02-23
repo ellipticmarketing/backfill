@@ -5,8 +5,8 @@ use Elliptic\Backfill\Services\TempDatabaseService;
 
 beforeEach(function () {
     config(['backfill.server.temp_strategy' => 'tables']);
-    $this->tempDb = new TempDatabaseService();
-    $this->service = new SanitizationService();
+    $this->tempDb = new TempDatabaseService;
+    $this->service = new SanitizationService;
 });
 
 it('generates email sanitization SQL', function () {

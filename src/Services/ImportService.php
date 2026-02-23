@@ -55,20 +55,20 @@ class ImportService
         // The dump may reference a temp table name — we'll handle this with a
         // SQL wrapper that renames inserts via a temp-to-real table mapping.
         $sql = $this->prepareSqlForImport($table, $sqlFilePath, $isDelta);
-        $importPath = $sqlFilePath . '.import.sql';
+        $importPath = $sqlFilePath.'.import.sql';
         file_put_contents($importPath, $sql);
 
         $args = array_filter([
             'mysql',
-            '--host=' . $host,
-            '--port=' . $port,
-            '--user=' . $username,
-            $password ? '--password=' . $password : null,
+            '--host='.$host,
+            '--port='.$port,
+            '--user='.$username,
+            $password ? '--password='.$password : null,
             $database,
         ]);
 
         $process = Process::fromShellCommandline(
-            implode(' ', array_map('escapeshellarg', $args)) . ' < ' . escapeshellarg($importPath)
+            implode(' ', array_map('escapeshellarg', $args)).' < '.escapeshellarg($importPath)
         );
         $process->setTimeout(config('backfill.client.timeout', 300));
         $process->run();
@@ -77,7 +77,7 @@ class ImportService
 
         if (! $process->isSuccessful()) {
             throw new RuntimeException(
-                "MySQL import failed for table '{$table}': " . $process->getErrorOutput()
+                "MySQL import failed for table '{$table}': ".$process->getErrorOutput()
             );
         }
 
@@ -113,7 +113,7 @@ class ImportService
         }
 
         // Full import: disable FK checks, run the dump, re-enable
-        return "SET FOREIGN_KEY_CHECKS=0;\n" . $sql . "\nSET FOREIGN_KEY_CHECKS=1;\n";
+        return "SET FOREIGN_KEY_CHECKS=0;\n".$sql."\nSET FOREIGN_KEY_CHECKS=1;\n";
     }
 
     /**

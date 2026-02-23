@@ -25,8 +25,8 @@ class PullCommand extends Command
     {
         $allowed = config('backfill.client.allowed_environments', ['local', 'staging']);
         if (! app()->environment($allowed)) {
-            $this->error("🚫 backfill:pull is only allowed in these environments: " . implode(', ', $allowed));
-            $this->error("   Current environment: " . app()->environment());
+            $this->error('🚫 backfill:pull is only allowed in these environments: '.implode(', ', $allowed));
+            $this->error('   Current environment: '.app()->environment());
 
             return self::FAILURE;
         }
@@ -35,7 +35,8 @@ class PullCommand extends Command
         $driver = config("database.connections.{$connection}.driver");
 
         if ($driver !== 'mysql' && $driver !== 'mariadb' && ! app()->runningUnitTests()) {
-            $this->error('🚫 Backfill requires a MySQL or MariaDB connection. Current driver: ' . $driver);
+            $this->error('🚫 Backfill requires a MySQL or MariaDB connection. Current driver: '.$driver);
+
             return self::FAILURE;
         }
 
@@ -98,7 +99,7 @@ class PullCommand extends Command
 
             $missing = array_diff($requested, $tableOrder);
             if (! empty($missing)) {
-                $this->warn('Tables not found on server: ' . implode(', ', $missing));
+                $this->warn('Tables not found on server: '.implode(', ', $missing));
             }
         }
 
@@ -108,11 +109,12 @@ class PullCommand extends Command
         $totalTables = count($tableOrder);
         $totalRows = array_sum(array_map(function ($t) use ($tableInfo) {
             $info = $tableInfo[$t] ?? [];
+
             return isset($info['delta_count']) ? $info['delta_count'] : ($info['row_count'] ?? 0);
         }, $tableOrder));
 
         $this->info("   Tables: {$totalTables}");
-        $this->info("   Estimated rows to sync: " . number_format($totalRows));
+        $this->info('   Estimated rows to sync: '.number_format($totalRows));
 
         if ($isDryRun) {
             $this->newLine();
@@ -164,13 +166,14 @@ class PullCommand extends Command
 
             foreach ($tableOrder as $table) {
                 $info = $tableInfo[$table] ?? [];
-                
+
                 $isDeltaTable = $isDelta && ($info['has_timestamps'] ?? false);
                 $after = $isDeltaTable ? $lastSync : null;
 
                 if ($isDeltaTable && isset($info['delta_count']) && $info['delta_count'] === 0) {
                     $downloadBar->advance();
-                    // we can't emit info text inside progress bar easily without breaking it, 
+
+                    // we can't emit info text inside progress bar easily without breaking it,
                     // so we just advance and continue.
                     continue;
                 }
@@ -193,7 +196,7 @@ class PullCommand extends Command
             $this->newLine(2);
 
             // Save a timestamp marker so we can detect this download later
-            file_put_contents($tempDir . DIRECTORY_SEPARATOR . '.backfill-meta.json', json_encode([
+            file_put_contents($tempDir.DIRECTORY_SEPARATOR.'.backfill-meta.json', json_encode([
                 'downloaded_at' => now()->toIso8601String(),
                 'mode' => $mode,
                 'table_order' => $tableOrder,
@@ -247,7 +250,7 @@ class PullCommand extends Command
 
         // Determine which tables actually have downloaded dump files
         $importableTables = array_filter($tableOrder, function ($table) use ($tempDir) {
-            return file_exists($tempDir . DIRECTORY_SEPARATOR . "{$table}.sql");
+            return file_exists($tempDir.DIRECTORY_SEPARATOR."{$table}.sql");
         });
 
         $importBar = $this->output->createProgressBar(count($importableTables));
@@ -256,7 +259,7 @@ class PullCommand extends Command
 
         foreach ($importableTables as $table) {
             $info = $tableInfo[$table] ?? [];
-            $dumpPath = $tempDir . DIRECTORY_SEPARATOR . "{$table}.sql";
+            $dumpPath = $tempDir.DIRECTORY_SEPARATOR."{$table}.sql";
 
             $importBar->setMessage("Importing {$table}...");
             $importBar->display();
@@ -264,7 +267,7 @@ class PullCommand extends Command
             try {
                 $tableIsDelta = $isDelta && ($info['has_timestamps'] ?? false);
                 $rowCount = $importer->importSqlDump($table, $dumpPath, $tableIsDelta);
-                
+
                 if ($tableIsDelta && isset($info['delta_count'])) {
                     $rowCount = $info['delta_count'];
                 }
@@ -274,7 +277,7 @@ class PullCommand extends Command
             } catch (\Throwable $e) {
                 $this->newLine();
                 $this->error("Error importing {$table}: {$e->getMessage()}");
-                $syncedTables[$table] = 'error: ' . $e->getMessage();
+                $syncedTables[$table] = 'error: '.$e->getMessage();
             }
 
             $importBar->advance();
@@ -282,7 +285,7 @@ class PullCommand extends Command
 
         $importBar->setMessage('Done!');
         $importBar->finish();
-        
+
         // Add skipped delta tables to synced tables as 0 rows
         foreach ($tableOrder as $table) {
             $info = $tableInfo[$table] ?? [];
@@ -291,7 +294,7 @@ class PullCommand extends Command
                 $syncedTables[$table] = 0;
             }
         }
-        
+
         $this->newLine(2);
 
         // Clean up temp directory
@@ -300,16 +303,16 @@ class PullCommand extends Command
         // Record completion
         $state->recordComplete($syncId, $syncedTables, $totalRowsSynced);
 
-        $this->info("✅ Sync complete!");
+        $this->info('✅ Sync complete!');
         $this->info("   Mode: {$mode}");
-        $this->info("   Tables: " . count(array_filter($syncedTables, fn ($v) => is_int($v))));
-        $this->info("   Rows synced: " . number_format($totalRowsSynced));
-        $this->info("   Duration: " . $startedAt->diffForHumans(now(), true));
+        $this->info('   Tables: '.count(array_filter($syncedTables, fn ($v) => is_int($v))));
+        $this->info('   Rows synced: '.number_format($totalRowsSynced));
+        $this->info('   Duration: '.$startedAt->diffForHumans(now(), true));
 
         // Dispatch event so apps can run post-sync hooks (cache clear, scout index, etc.)
         \Elliptic\Backfill\Events\SyncCompleted::dispatch(
-            $mode, 
-            $syncedTables, 
+            $mode,
+            $syncedTables,
             $totalRowsSynced
         );
 
@@ -326,12 +329,12 @@ class PullCommand extends Command
         $existing = $this->findRecentDownloadDir();
 
         if ($existing) {
-            $metaFile = $existing . DIRECTORY_SEPARATOR . '.backfill-meta.json';
+            $metaFile = $existing.DIRECTORY_SEPARATOR.'.backfill-meta.json';
             $meta = json_decode(file_get_contents($metaFile), true);
             $downloadedAt = Carbon::parse($meta['downloaded_at']);
             $age = $downloadedAt->diffForHumans(now(), true);
 
-            $dumpFileCount = count(glob($existing . DIRECTORY_SEPARATOR . '*.sql'));
+            $dumpFileCount = count(glob($existing.DIRECTORY_SEPARATOR.'*.sql'));
 
             $this->newLine();
             $this->components->info("Found a recent download from {$age} ago with {$dumpFileCount} table dumps.");
@@ -350,7 +353,7 @@ class PullCommand extends Command
             File::deleteDirectory($existing);
         }
 
-        $newDir = storage_path('app/backfill-' . time());
+        $newDir = storage_path('app/backfill-'.time());
         File::ensureDirectoryExists($newDir);
 
         return $newDir;
@@ -367,7 +370,7 @@ class PullCommand extends Command
             return null;
         }
 
-        $dirs = glob($appDir . '/backfill-*', GLOB_ONLYDIR);
+        $dirs = glob($appDir.'/backfill-*', GLOB_ONLYDIR);
 
         if (empty($dirs)) {
             return null;
@@ -377,7 +380,7 @@ class PullCommand extends Command
         rsort($dirs);
 
         foreach ($dirs as $dir) {
-            $metaFile = $dir . DIRECTORY_SEPARATOR . '.backfill-meta.json';
+            $metaFile = $dir.DIRECTORY_SEPARATOR.'.backfill-meta.json';
 
             if (! file_exists($metaFile)) {
                 continue;
@@ -416,6 +419,7 @@ class PullCommand extends Command
                     'table' => $table,
                     'issue' => 'Table does not exist locally',
                 ];
+
                 continue;
             }
 
@@ -427,14 +431,14 @@ class PullCommand extends Command
             if (! empty($missingLocally)) {
                 $diffs[] = [
                     'table' => $table,
-                    'issue' => 'Columns on server but missing locally: ' . implode(', ', $missingLocally),
+                    'issue' => 'Columns on server but missing locally: '.implode(', ', $missingLocally),
                 ];
             }
 
             if (! empty($extraLocally)) {
                 $diffs[] = [
                     'table' => $table,
-                    'issue' => 'Columns local but missing on server: ' . implode(', ', $extraLocally),
+                    'issue' => 'Columns local but missing on server: '.implode(', ', $extraLocally),
                 ];
             }
         }

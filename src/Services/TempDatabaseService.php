@@ -25,7 +25,7 @@ class TempDatabaseService
     public function __construct()
     {
         $this->strategy = config('backfill.server.temp_strategy', 'database');
-        $this->sourceDatabase = config('database.connections.' . config('database.default') . '.database');
+        $this->sourceDatabase = config('database.connections.'.config('database.default').'.database');
         $this->connectionName = $this->resolveConnectionName();
 
         // Best-effort cleanup on unexpected shutdown (OOM, fatal error, etc.)
@@ -163,7 +163,8 @@ class TempDatabaseService
                     if (($remaining[0]->count ?? 0) === 0) {
                         try {
                             $this->db()->statement("DROP DATABASE IF EXISTS `{$this->tempDatabase}`");
-                        } catch (\Throwable $e) {}
+                        } catch (\Throwable $e) {
+                        }
                         $this->tempDatabase = null;
                     }
                 }
@@ -184,13 +185,15 @@ class TempDatabaseService
             if ($this->shouldDropTempDatabase) {
                 try {
                     $this->db()->statement("DROP DATABASE IF EXISTS `{$this->tempDatabase}`");
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                }
                 $this->tempDatabase = null;
             } else {
                 foreach ($this->preparedDatabaseTables as $table) {
                     try {
                         $this->db()->statement("DROP TABLE IF EXISTS `{$this->tempDatabase}`.`{$table}`");
-                    } catch (\Throwable $e) {}
+                    } catch (\Throwable $e) {
+                    }
                 }
                 $this->preparedDatabaseTables = [];
             }
@@ -232,7 +235,7 @@ class TempDatabaseService
             $this->tempDatabase = $configuredName;
             $this->shouldDropTempDatabase = false;
         } else {
-            $this->tempDatabase = '_backfill_temp_' . time() . '_' . mt_rand(1000, 9999);
+            $this->tempDatabase = '_backfill_temp_'.time().'_'.mt_rand(1000, 9999);
             $this->shouldDropTempDatabase = true;
         }
 
@@ -248,10 +251,10 @@ class TempDatabaseService
         } catch (\Throwable $e) {
             throw new RuntimeException(
                 "Failed to create or access temporary database '{$this->tempDatabase}'. "
-                . 'Ensure the database user has access or CREATE DATABASE privileges '
-                . '(you can configure alternate credentials via BACKFILL_TEMP_USERNAME / BACKFILL_TEMP_PASSWORD), '
-                . "or set backfill.server.temp_strategy to 'tables'. "
-                . "Original error: {$e->getMessage()}"
+                .'Ensure the database user has access or CREATE DATABASE privileges '
+                .'(you can configure alternate credentials via BACKFILL_TEMP_USERNAME / BACKFILL_TEMP_PASSWORD), '
+                ."or set backfill.server.temp_strategy to 'tables'. "
+                ."Original error: {$e->getMessage()}"
             );
         }
     }
@@ -262,13 +265,14 @@ class TempDatabaseService
 
     protected function prepareWithTables(string $table): void
     {
-        $tempName = '_backfill_' . $table;
+        $tempName = '_backfill_'.$table;
         $this->tempTables[$table] = $tempName;
 
         $this->db()->statement("DROP TABLE IF EXISTS `{$tempName}`");
 
         if (app()->runningUnitTests()) {
             $this->db()->statement("CREATE TABLE `{$tempName}` AS SELECT * FROM `{$table}`");
+
             return;
         }
 

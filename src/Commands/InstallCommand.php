@@ -65,7 +65,7 @@ class InstallCommand extends Command
                 $token = $this->ask('Please enter your BACKFILL_TOKEN');
             } else {
                 $token = Str::random(64);
-                $this->line("  Generated token:");
+                $this->line('  Generated token:');
                 $this->newLine();
                 $this->line("  <fg=green>{$token}</>");
                 $this->newLine();
@@ -156,7 +156,7 @@ class InstallCommand extends Command
         }
 
         if ($this->confirm('Add storage/backfill-state.json to .gitignore?', true)) {
-            file_put_contents($gitignorePath, rtrim($content) . "\nstorage/backfill-state.json\n");
+            file_put_contents($gitignorePath, rtrim($content)."\nstorage/backfill-state.json\n");
             $this->components->info('Added to .gitignore');
         }
     }
@@ -196,6 +196,7 @@ class InstallCommand extends Command
                 }
             } catch (\Throwable $e) {
                 $this->warn("  Could not scan local schema: {$e->getMessage()}");
+
                 return;
             }
         } else {
@@ -204,6 +205,7 @@ class InstallCommand extends Command
 
             if (! $sourceUrl || ! $token) {
                 $this->warn('  Source URL or Token missing. Skipping remote scan.');
+
                 return;
             }
 
@@ -213,16 +215,18 @@ class InstallCommand extends Command
                 $prefix = config('backfill.server.route_prefix', 'api/backfill');
                 $response = Http::withToken($token)
                     ->timeout(30)
-                    ->get(rtrim($sourceUrl, '/') . "/{$prefix}/manifest");
+                    ->get(rtrim($sourceUrl, '/')."/{$prefix}/manifest");
 
                 if (! $response->successful()) {
                     $this->warn("  Could not reach server (HTTP {$response->status()}). Skipping.");
+
                     return;
                 }
 
                 $manifest = $response->json();
             } catch (\Throwable $e) {
                 $this->warn("  Could not reach server: {$e->getMessage()}");
+
                 return;
             }
 
@@ -290,7 +294,7 @@ class InstallCommand extends Command
             foreach ($columns as $column => $type) {
                 $columnRules[] = "            '{$column}' => ['type' => '{$type}'],";
             }
-            $rules[] = "        '{$table}' => [\n" . implode("\n", $columnRules) . "\n        ],";
+            $rules[] = "        '{$table}' => [\n".implode("\n", $columnRules)."\n        ],";
         }
 
         $rulesString = implode("\n", $rules);
@@ -320,13 +324,13 @@ class InstallCommand extends Command
             return;
         }
 
-        $this->line('  Connecting to <fg=white>' . $sourceUrl . '</>...');
+        $this->line('  Connecting to <fg=white>'.$sourceUrl.'</>...');
 
         try {
             $prefix = config('backfill.server.route_prefix', 'api/backfill');
             $response = Http::withToken($token)
                 ->timeout(15)
-                ->get(rtrim($sourceUrl, '/') . "/{$prefix}/manifest");
+                ->get(rtrim($sourceUrl, '/')."/{$prefix}/manifest");
 
             if ($response->successful()) {
                 $manifest = $response->json();
@@ -384,6 +388,7 @@ class InstallCommand extends Command
 
         if (! file_exists($envPath)) {
             $this->components->error('No .env file found. You will need to configure manually.');
+
             return;
         }
 
@@ -393,7 +398,7 @@ class InstallCommand extends Command
         if ($sourceUrl) {
             $sourceUrl = trim($sourceUrl);
             config(['backfill.client.source_url' => $sourceUrl]);
-            
+
             if (env('BACKFILL_SOURCE_URL') !== $sourceUrl) {
                 $this->writeToEnv($envPath, 'BACKFILL_SOURCE_URL', $sourceUrl);
                 $this->components->info('Client configuration written to .env');

@@ -72,8 +72,8 @@ class SyncClient
 
         // Stream to a temp file, then extract meta and write clean SQL to the final path.
         // This avoids rename() which fails on Windows due to file locking.
-        $filePath = $destDir . DIRECTORY_SEPARATOR . "{$table}.sql";
-        $tempPath = $filePath . '.tmp';
+        $filePath = $destDir.DIRECTORY_SEPARATOR."{$table}.sql";
+        $tempPath = $filePath.'.tmp';
 
         $response = $this->request()
             ->timeout($this->timeout)
@@ -85,7 +85,7 @@ class SyncClient
             if (file_exists($tempPath)) {
                 $body = file_get_contents($tempPath);
                 $json = json_decode($body, true);
-                $errorMessage = isset($json['error']) ? " — {$json['error']}" : ($body ? " — " . substr($body, 0, 500) : '');
+                $errorMessage = isset($json['error']) ? " — {$json['error']}" : ($body ? ' — '.substr($body, 0, 500) : '');
             }
             @unlink($tempPath);
 

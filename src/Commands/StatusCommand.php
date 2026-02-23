@@ -51,7 +51,7 @@ class StatusCommand extends Command
                 strtoupper($entry['mode'] ?? '-'),
                 $status,
                 number_format($entry['rows_synced'] ?? 0),
-                $successCount . ' tables',
+                $successCount.' tables',
                 $duration,
                 $startedFormatted,
             ];
@@ -67,7 +67,7 @@ class StatusCommand extends Command
         if ($lastSync) {
             $this->newLine();
             $this->info("Last successful sync: {$lastSync}");
-            $this->info("A delta sync will pull data created/updated after this timestamp.");
+            $this->info('A delta sync will pull data created/updated after this timestamp.');
         }
 
         return self::SUCCESS;

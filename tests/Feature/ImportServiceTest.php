@@ -13,8 +13,8 @@ beforeEach(function () {
         $table->timestamps();
     });
 
-    $this->importer = new ImportService();
-    $this->tempDir = sys_get_temp_dir() . '/backfill-test-' . time();
+    $this->importer = new ImportService;
+    $this->tempDir = sys_get_temp_dir().'/backfill-test-'.time();
     @mkdir($this->tempDir, 0755, true);
 });
 
@@ -22,7 +22,7 @@ afterEach(function () {
     Schema::dropIfExists('test_users');
 
     // Clean up temp files
-    $files = glob($this->tempDir . '/*');
+    $files = glob($this->tempDir.'/*');
     foreach ($files as $file) {
         @unlink($file);
     }
@@ -31,12 +31,12 @@ afterEach(function () {
 
 it('imports a SQL dump file using the PHP fallback for SQLite', function () {
     // Write a SQL dump that inserts rows
-    $sql = <<<SQL
+    $sql = <<<'SQL'
 INSERT INTO `test_users` (`id`, `name`, `email`, `created_at`, `updated_at`) VALUES (1, 'User_1', 'uuid1@example.test', '2024-01-01 00:00:00', '2024-01-01 00:00:00');
 INSERT INTO `test_users` (`id`, `name`, `email`, `created_at`, `updated_at`) VALUES (2, 'User_2', 'uuid2@example.test', '2024-01-01 00:00:00', '2024-01-01 00:00:00');
 SQL;
 
-    $filePath = $this->tempDir . '/test_users.sql';
+    $filePath = $this->tempDir.'/test_users.sql';
     file_put_contents($filePath, $sql);
 
     $rowCount = $this->importer->importSqlDump('test_users', $filePath, false);
@@ -54,7 +54,7 @@ it('handles full import by truncating first', function () {
     ]);
 
     $sql = "INSERT INTO `test_users` (`id`, `name`, `email`, `created_at`, `updated_at`) VALUES (10, 'NewUser', 'new@example.test', '2024-01-01 00:00:00', '2024-01-01 00:00:00');\n";
-    $filePath = $this->tempDir . '/test_users.sql';
+    $filePath = $this->tempDir.'/test_users.sql';
     file_put_contents($filePath, $sql);
 
     $rowCount = $this->importer->importSqlDump('test_users', $filePath, false);
@@ -65,7 +65,7 @@ it('handles full import by truncating first', function () {
 });
 
 it('handles empty dump files gracefully', function () {
-    $filePath = $this->tempDir . '/test_users.sql';
+    $filePath = $this->tempDir.'/test_users.sql';
     file_put_contents($filePath, '');
 
     $rowCount = $this->importer->importSqlDump('test_users', $filePath, false);
@@ -77,7 +77,7 @@ it('rewrites temp table names to the real table name', function () {
     // Simulate a dump that references the temp table name
     $sql = "INSERT INTO `_backfill_test_users` (`id`, `name`, `email`, `created_at`, `updated_at`) VALUES (1, 'User_1', 'test@example.test', '2024-01-01 00:00:00', '2024-01-01 00:00:00');\n";
 
-    $filePath = $this->tempDir . '/test_users.sql';
+    $filePath = $this->tempDir.'/test_users.sql';
     file_put_contents($filePath, $sql);
 
     $rowCount = $this->importer->importSqlDump('test_users', $filePath, false);

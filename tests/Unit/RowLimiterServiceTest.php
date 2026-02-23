@@ -13,7 +13,9 @@ use Illuminate\Support\Facades\Schema;
 class RowLimiterServiceTest extends TestCase
 {
     protected RowLimiterService $service;
+
     protected TempDatabaseService $tempDb;
+
     protected SchemaService $schema;
 
     protected function setUp(): void
@@ -36,23 +38,23 @@ class RowLimiterServiceTest extends TestCase
         });
 
         config(['backfill.server.temp_strategy' => 'tables']);
-        $this->tempDb = new TempDatabaseService();
-        
+        $this->tempDb = new TempDatabaseService;
+
         $this->schema = \Mockery::mock(SchemaService::class);
         $this->schema->shouldReceive('getPrimaryKey')->andReturn(['id']);
         $this->schema->shouldReceive('getTables')->andReturn(['users', 'logs']);
         $this->schema->shouldReceive('getForeignKeys')->andReturn([
-            ['table' => 'logs', 'column' => 'user_id', 'referenced_table' => 'users', 'referenced_column' => 'id']
+            ['table' => 'logs', 'column' => 'user_id', 'referenced_table' => 'users', 'referenced_column' => 'id'],
         ]);
-        
-        $this->service = new RowLimiterService();
+
+        $this->service = new RowLimiterService;
     }
 
     protected function tearDown(): void
     {
         Schema::dropIfExists('logs');
         Schema::dropIfExists('users');
-        
+
         parent::tearDown();
     }
 
@@ -67,7 +69,7 @@ class RowLimiterServiceTest extends TestCase
         $this->tempDb->prepare('logs');
 
         $resolver = new SubsetResolverService($this->schema, [
-            'logs' => ['max_rows' => 2, 'order_by' => 'id', 'direction' => 'desc']
+            'logs' => ['max_rows' => 2, 'order_by' => 'id', 'direction' => 'desc'],
         ], '');
 
         $this->service->apply(
@@ -100,7 +102,7 @@ class RowLimiterServiceTest extends TestCase
         $this->tempDb->prepare('logs');
 
         $resolver = new SubsetResolverService($this->schema, [
-            'logs' => ['keep_days' => 5, 'order_by' => 'created_at']
+            'logs' => ['keep_days' => 5, 'order_by' => 'created_at'],
         ], '');
 
         $this->service->apply(
@@ -133,7 +135,7 @@ class RowLimiterServiceTest extends TestCase
         $this->tempDb->prepare('logs');
 
         $resolver = new SubsetResolverService($this->schema, [
-            'logs' => ['keep_days' => 5, 'max_rows' => 2, 'order_by' => 'created_at', 'direction' => 'desc']
+            'logs' => ['keep_days' => 5, 'max_rows' => 2, 'order_by' => 'created_at', 'direction' => 'desc'],
         ], '');
 
         $this->service->apply(
@@ -165,7 +167,7 @@ class RowLimiterServiceTest extends TestCase
         $this->tempDb->prepare('logs');
 
         $resolver = new SubsetResolverService($this->schema, [
-            'logs' => ['keep_days' => 5, 'order_by' => 'created_at']
+            'logs' => ['keep_days' => 5, 'order_by' => 'created_at'],
         ], '');
 
         $this->service->apply(

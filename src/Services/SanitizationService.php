@@ -46,7 +46,7 @@ class SanitizationService
             'name' => "CONCAT('User_', `id`)",
             'phone' => "CONCAT('+1555', LPAD(`id`, 7, '0'))",
             'text' => "CONCAT('text_', MD5(RAND()))",
-            'hash' => "'" . self::PASSWORD_HASH . "'",
+            'hash' => "'".self::PASSWORD_HASH."'",
             'null' => 'NULL',
             'address' => "CONCAT(`id`, ' Example St')",
             'local_ip' => "CONCAT('192.168.', FLOOR(RAND() * 255), '.', FLOOR(RAND() * 255))",
@@ -86,9 +86,9 @@ class SanitizationService
         }
 
         $caseStatement = "CASE\n"
-            . implode("\n", $whenClauses) . "\n"
-            . "ELSE {$expression}\n"
-            . 'END';
+            .implode("\n", $whenClauses)."\n"
+            ."ELSE {$expression}\n"
+            .'END';
 
         return "UPDATE {$qualifiedTable} SET `{$column}` = {$caseStatement}";
     }
