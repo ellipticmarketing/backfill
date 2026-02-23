@@ -30,7 +30,11 @@ class TempDatabaseService
 
         // Best-effort cleanup on unexpected shutdown (OOM, fatal error, etc.)
         register_shutdown_function(function () {
-            $this->cleanupAll();
+            try {
+                $this->cleanupAll();
+            } catch (\Throwable $e) {
+                // Ignore exceptions during shutdown as the application container might already be destroyed (e.g. in tests)
+            }
         });
     }
 
