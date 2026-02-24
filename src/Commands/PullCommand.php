@@ -314,9 +314,6 @@ class PullCommand extends Command
         
         $this->newLine(2);
 
-        // Clean up temp directory (Skipped to retain local cache)
-        // File::deleteDirectory($tempDir);
-
         // Record completion
         $state->recordComplete($syncId, $syncedTables, $totalRowsSynced);
 
