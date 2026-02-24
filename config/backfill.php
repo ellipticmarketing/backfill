@@ -68,6 +68,9 @@ return [
         // HTTP timeout in seconds for each chunk request
         'timeout' => 300,
 
+        // How long to keep local cached dump files (in hours) before requiring a fresh download
+        'local_cache_hours' => env('BACKFILL_CACHE_HOURS', 1),
+
         // Number of rows to insert per batch during import
         'chunk_size' => 5000,
     ],

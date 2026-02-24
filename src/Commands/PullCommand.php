@@ -15,7 +15,9 @@ class PullCommand extends Command
     protected $signature = 'backfill:pull
         {--full : Force a full sync, ignoring last pull timestamp}
         {--tables= : Comma-separated list of specific tables to sync}
-        {--dry-run : Show what would be synced without making changes}';
+        {--dry-run : Show what would be synced without making changes}
+        {--force : Accept all questions and warnings automatically}
+        {--fresh : Download fresh data even if a recent local copy exists}';
 
     protected $aliases = ['backfill'];
 
@@ -41,6 +43,10 @@ class PullCommand extends Command
 
         $isDelta = ! $this->option('full');
         $isDryRun = $this->option('dry-run');
+        $isForce = $this->option('force');
+
+        // Clean up old downloads before starting
+        $this->cleanupOldDownloads();
 
         // Pre-flight checks (skip for dry-run since no import happens)
         if (! $isDryRun) {
@@ -53,7 +59,7 @@ class PullCommand extends Command
                 }
                 $this->newLine();
 
-                if (! $this->confirm('Continue anyway?', false)) {
+                if (! $isForce && ! $this->confirm('Continue anyway?', false)) {
                     return self::FAILURE;
                 }
             }
@@ -76,6 +82,9 @@ class PullCommand extends Command
             $this->info("   Last sync: {$lastSync}");
         }
 
+        // Store the server time from the manifest to use as the sync checkpoint
+        $serverTime = null;
+
         // Fetch manifest
         $this->info('📋 Fetching manifest from server...');
 
@@ -89,6 +98,7 @@ class PullCommand extends Command
 
         $tableOrder = $manifest['table_order'] ?? [];
         $tableInfo = $manifest['tables'] ?? [];
+        $serverTime = $manifest['server_time'] ?? null;
 
         // Filter tables if --tables option is provided
         $filterTables = $this->option('tables');
@@ -106,9 +116,16 @@ class PullCommand extends Command
         $tableOrder = array_values(array_filter($tableOrder, fn ($t) => $t !== 'BACKFILL_logs'));
 
         $totalTables = count($tableOrder);
-        $totalRows = array_sum(array_map(function ($t) use ($tableInfo) {
+        $totalRows = array_sum(array_map(function ($t) use ($tableInfo, $isDelta) {
             $info = $tableInfo[$t] ?? [];
-            return isset($info['delta_count']) ? $info['delta_count'] : ($info['row_count'] ?? 0);
+            $hasTimestamps = $info['has_timestamps'] ?? false;
+
+            // In delta mode, use delta_count for tables with timestamps, full row_count otherwise
+            if ($isDelta && $hasTimestamps) {
+                return $info['delta_count'] ?? 0;
+            }
+
+            return $info['row_count'] ?? 0;
         }, $tableOrder));
 
         $this->info("   Tables: {$totalTables}");
@@ -122,23 +139,25 @@ class PullCommand extends Command
             $tableData = [];
             foreach ($tableOrder as $table) {
                 $info = $tableInfo[$table] ?? [];
-                $tableRows = isset($info['delta_count']) ? $info['delta_count'] : ($info['row_count'] ?? 0);
+                $hasTimestamps = $info['has_timestamps'] ?? false;
+                $tableRows = ($isDelta && $hasTimestamps) ? ($info['delta_count'] ?? 0) : ($info['row_count'] ?? 0);
+                $note = ($isDelta && ! $hasTimestamps) ? 'full (no timestamps)' : '';
                 $tableData[] = [
                     $table,
                     number_format($tableRows),
                     ($info['has_sanitization'] ?? false) ? '✓' : '',
                     ($info['has_limit'] ?? false) ? '✓' : '',
-                    ($info['has_timestamps'] ?? false) ? '✓' : '',
+                    $note,
                 ];
             }
 
-            $this->table(['Table', 'Rows', 'Sanitized', 'Limited', 'Timestamps'], $tableData);
+            $this->table(['Table', 'Rows', 'Sanitized', 'Limited', 'Note'], $tableData);
 
             return self::SUCCESS;
         }
 
         // Confirm with the user
-        if (! $isDelta && ! $this->confirm("Proceed with {$mode} sync of {$totalTables} tables?", true)) {
+        if (! $isDelta && ! $isForce && ! $this->confirm("Proceed with {$mode} sync of {$totalTables} tables?", true)) {
             $this->info('Cancelled.');
 
             return self::SUCCESS;
@@ -148,11 +167,12 @@ class PullCommand extends Command
         // Phase 1: Download all dumps
         // ──────────────────────────────────────────────────
 
-        $tempDir = $this->resolveDownloadDirectory($tableOrder, $tableInfo);
+        $isCached = false;
+        $tempDir = $this->resolveDownloadDirectory($tableOrder, $tableInfo, $isCached);
 
-        if ($tempDir === null) {
-            // User chose to resume — find the existing directory
-            $tempDir = $this->findRecentDownloadDir();
+        if ($isCached) {
+            $this->newLine();
+            $this->info('📥 Phase 1: Using locally cached tables...');
         } else {
             $this->newLine();
             $this->info('📥 Phase 1: Downloading all tables...');
@@ -164,7 +184,6 @@ class PullCommand extends Command
 
             foreach ($tableOrder as $table) {
                 $info = $tableInfo[$table] ?? [];
-                
                 $isDeltaTable = $isDelta && ($info['has_timestamps'] ?? false);
                 $after = $isDeltaTable ? $lastSync : null;
 
@@ -222,7 +241,7 @@ class PullCommand extends Command
             $this->line('  or run <fg=white>php artisan migrate</> first.');
             $this->newLine();
 
-            if (! $this->confirm('Continue importing despite schema differences?', false)) {
+            if (! $isForce && ! $this->confirm('Continue importing despite schema differences?', false)) {
                 $this->info('Import cancelled. Downloaded data is preserved at:');
                 $this->line("  <fg=white>{$tempDir}</>");
 
@@ -240,7 +259,7 @@ class PullCommand extends Command
 
         // Record start
         $startedAt = Carbon::now();
-        $syncId = $state->recordStart($mode, config('backfill.client.source_url', ''));
+        $syncId = $state->recordStart($mode, config('backfill.client.source_url', ''), $serverTime);
 
         $totalRowsSynced = 0;
         $syncedTables = [];
@@ -262,10 +281,10 @@ class PullCommand extends Command
             $importBar->display();
 
             try {
-                $tableIsDelta = $isDelta && ($info['has_timestamps'] ?? false);
-                $rowCount = $importer->importSqlDump($table, $dumpPath, $tableIsDelta);
+                $isDeltaTable = $isDelta && ($info['has_timestamps'] ?? false);
+                $rowCount = $importer->importSqlDump($table, $dumpPath, $isDeltaTable);
                 
-                if ($tableIsDelta && isset($info['delta_count'])) {
+                if ($isDeltaTable && isset($info['delta_count'])) {
                     $rowCount = $info['delta_count'];
                 }
 
@@ -283,19 +302,20 @@ class PullCommand extends Command
         $importBar->setMessage('Done!');
         $importBar->finish();
         
-        // Add skipped delta tables to synced tables as 0 rows
+        // Add skipped delta tables (0 changed rows) to synced tables as 0 rows
         foreach ($tableOrder as $table) {
-            $info = $tableInfo[$table] ?? [];
-            $tableIsDelta = $isDelta && ($info['has_timestamps'] ?? false);
-            if (! isset($syncedTables[$table]) && $tableIsDelta && isset($info['delta_count']) && $info['delta_count'] === 0) {
-                $syncedTables[$table] = 0;
+            if (! isset($syncedTables[$table])) {
+                $info = $tableInfo[$table] ?? [];
+                if ($isDelta && isset($info['delta_count']) && $info['delta_count'] === 0) {
+                    $syncedTables[$table] = 0;
+                }
             }
         }
         
         $this->newLine(2);
 
-        // Clean up temp directory
-        File::deleteDirectory($tempDir);
+        // Clean up temp directory (Skipped to retain local cache)
+        // File::deleteDirectory($tempDir);
 
         // Record completion
         $state->recordComplete($syncId, $syncedTables, $totalRowsSynced);
@@ -305,6 +325,31 @@ class PullCommand extends Command
         $this->info("   Tables: " . count(array_filter($syncedTables, fn ($v) => is_int($v))));
         $this->info("   Rows synced: " . number_format($totalRowsSynced));
         $this->info("   Duration: " . $startedAt->diffForHumans(now(), true));
+
+        // Per-table summary
+        $this->newLine();
+        $summaryData = [];
+        foreach ($syncedTables as $table => $result) {
+            $info = $tableInfo[$table] ?? [];
+            $hasTimestamps = $info['has_timestamps'] ?? false;
+
+            if (is_string($result)) {
+                $note = $result; // error message
+                $rows = '—';
+            } else {
+                $rows = number_format($result);
+                if ($isDelta && ! $hasTimestamps) {
+                    $note = 'full sync (no timestamps)';
+                } elseif ($isDelta && $result === 0) {
+                    $note = 'up to date';
+                } else {
+                    $note = '';
+                }
+            }
+
+            $summaryData[] = [$table, $rows, $note];
+        }
+        $this->table(['Table', 'Rows', 'Note'], $summaryData);
 
         // Dispatch event so apps can run post-sync hooks (cache clear, scout index, etc.)
         \Elliptic\Backfill\Events\SyncCompleted::dispatch(
@@ -317,47 +362,40 @@ class PullCommand extends Command
     }
 
     /**
-     * Check for a recent download directory (within 24 hours).
-     * If found, ask the user whether to resume or start fresh.
-     * Returns the new temp directory path, or null if user chose to resume.
+     * Resolve the directory to use for the download.
      */
-    protected function resolveDownloadDirectory(array $tableOrder, array $tableInfo): ?string
+    protected function resolveDownloadDirectory(array $tableOrder, array $tableInfo, bool &$isCached): string
     {
         $existing = $this->findRecentDownloadDir();
 
         if ($existing) {
-            $metaFile = $existing . DIRECTORY_SEPARATOR . '.backfill-meta.json';
-            $meta = json_decode(file_get_contents($metaFile), true);
-            $downloadedAt = Carbon::parse($meta['downloaded_at']);
-            $age = $downloadedAt->diffForHumans(now(), true);
+            if ($this->option('fresh')) {
+                File::deleteDirectory($existing);
+            } else {
+                $metaFile = $existing . DIRECTORY_SEPARATOR . '.backfill-meta.json';
+                $meta = json_decode(file_get_contents($metaFile), true);
+                $downloadedAt = Carbon::parse($meta['downloaded_at']);
+                $age = $downloadedAt->diffForHumans(now(), true);
 
-            $dumpFileCount = count(glob($existing . DIRECTORY_SEPARATOR . '*.sql'));
+                $dumpFileCount = count(glob($existing . DIRECTORY_SEPARATOR . '*.sql'));
 
-            $this->newLine();
-            $this->components->info("Found a recent download from {$age} ago with {$dumpFileCount} table dumps.");
-
-            $choice = $this->choice(
-                'Would you like to resume importing the existing data or download a fresh copy?',
-                ['Resume existing download', 'Download fresh data'],
-                0
-            );
-
-            if ($choice === 'Resume existing download') {
-                return null; // signal to use the existing dir
+                $this->newLine();
+                $this->components->info("Found a recent local cache from {$age} ago with {$dumpFileCount} table dumps. Using local copy.");
+                
+                $isCached = true;
+                return $existing;
             }
-
-            // User wants fresh data — clean up the old download
-            File::deleteDirectory($existing);
         }
 
         $newDir = storage_path('app/backfill-' . time());
         File::ensureDirectoryExists($newDir);
+        $isCached = false;
 
         return $newDir;
     }
 
     /**
-     * Find the most recent backfill download directory that is less than 24 hours old.
+     * Find the most recent backfill download directory that is within the configured limit.
      */
     protected function findRecentDownloadDir(): ?string
     {
@@ -373,8 +411,8 @@ class PullCommand extends Command
             return null;
         }
 
-        // Sort descending by name (timestamp-based) to get the most recent
         rsort($dirs);
+        $cacheHours = config('backfill.client.local_cache_hours', 1);
 
         foreach ($dirs as $dir) {
             $metaFile = $dir . DIRECTORY_SEPARATOR . '.backfill-meta.json';
@@ -386,12 +424,45 @@ class PullCommand extends Command
             $meta = json_decode(file_get_contents($metaFile), true);
             $downloadedAt = Carbon::parse($meta['downloaded_at'] ?? '2000-01-01');
 
-            if ($downloadedAt->diffInHours(now()) < 24) {
+            if ($downloadedAt->diffInHours(now()) < $cacheHours) {
                 return $dir;
             }
         }
 
         return null;
+    }
+
+    /**
+     * Clean up very old backfill download directories on init.
+     */
+    protected function cleanupOldDownloads(): void
+    {
+        $appDir = storage_path('app');
+
+        if (! is_dir($appDir)) {
+            return;
+        }
+
+        $dirs = glob($appDir . '/backfill-*', GLOB_ONLYDIR);
+        $cacheHours = config('backfill.client.local_cache_hours', 1);
+
+        foreach ($dirs as $dir) {
+            $metaFile = $dir . DIRECTORY_SEPARATOR . '.backfill-meta.json';
+
+            if (file_exists($metaFile)) {
+                $meta = json_decode(file_get_contents($metaFile), true);
+                $downloadedAt = Carbon::parse($meta['downloaded_at'] ?? '2000-01-01');
+
+                if ($downloadedAt->diffInHours(now()) >= $cacheHours) {
+                    File::deleteDirectory($dir);
+                }
+            } else {
+                $dirTime = filemtime($dir);
+                if ((time() - $dirTime) > ($cacheHours * 3600)) {
+                    File::deleteDirectory($dir);
+                }
+            }
+        }
     }
 
     /**

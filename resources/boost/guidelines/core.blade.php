@@ -56,6 +56,12 @@ php artisan backfill:pull
 
 # Preview what will be synced without making changes
 php artisan backfill:pull --dry-run
+
+# Run sync completely non-interactively
+php artisan backfill:pull --force
+
+# Force a fresh download instead of using an existing local cache
+php artisan backfill:pull --fresh
 </code-snippet>
 @endverbatim
 

@@ -46,7 +46,7 @@ class SyncState
      * Record the start of a sync operation.
      * Returns the entry ID for later updates.
      */
-    public function recordStart(string $mode, string $sourceUrl): int
+    public function recordStart(string $mode, string $sourceUrl, ?string $serverTime = null): int
     {
         $id = ($this->state['next_id'] ?? 1);
         $this->state['next_id'] = $id + 1;
@@ -56,6 +56,7 @@ class SyncState
             'mode' => $mode,
             'source_url' => $sourceUrl,
             'started_at' => now()->toIso8601String(),
+            'server_time' => $serverTime,
             'completed_at' => null,
             'tables_synced' => [],
             'rows_synced' => 0,
@@ -73,17 +74,20 @@ class SyncState
     public function recordComplete(int $id, array $tablesSynced, int $rowsSynced): void
     {
         $completedAt = now()->toIso8601String();
+        $serverTime = null;
 
         foreach ($this->state['history'] as &$entry) {
             if ($entry['id'] === $id) {
                 $entry['completed_at'] = $completedAt;
                 $entry['tables_synced'] = $tablesSynced;
                 $entry['rows_synced'] = $rowsSynced;
+                $serverTime = $entry['server_time'] ?? null;
                 break;
             }
         }
 
-        $this->state['last_completed_at'] = $completedAt;
+        // Use server time as the checkpoint for delta sync to avoid clock drift
+        $this->state['last_completed_at'] = $serverTime ?? $completedAt;
 
         // Keep only the last 50 entries to avoid unbounded growth
         if (count($this->state['history']) > 50) {

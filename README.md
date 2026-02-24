@@ -337,6 +337,8 @@ php artisan backfill [options]
 | `--full` | Force a complete re-sync, ignoring the last pull timestamp. Truncates all local tables before importing. |
 | `--tables=users,orders` | Only sync specific tables (comma-separated). |
 | `--dry-run` | Show what would be synced without making any changes. Displays a table with row counts, sanitization status, and limit status. |
+| `--force` | Accept all questions and warnings automatically, useful for non-interactive or automated scripts. |
+| `--fresh` | Download fresh data even if a recent local copy exists (local caches are used by default if they are less than the time defined in `local_cache_hours`, which defaults to 1). |
 
 **How it works:**
 
@@ -346,9 +348,13 @@ The pull command operates in three phases:
 2. **Schema comparison** — The remote column definitions from the manifest are compared against the local database schema. If there are mismatches (missing tables, extra/missing columns), a warning table is displayed and you can choose to abort and run migrations first. The downloaded data is preserved so you don't need to re-download.
 3. **Import** — Each downloaded dump file is imported into the local database.
 
-**Resuming interrupted downloads:**
+**Resuming interrupted downloads & caching:**
 
-If a previous download exists that is less than 24 hours old, the command will detect it and offer a choice:
+By default, download directories are locally cached for 1 hour (configurable via `local_cache_hours` in `config/backfill.php`).
+
+If a previous local cache exists, the command will use it, saving a full download cycle. If you need fresh data within that 1 hour window, use the `--fresh` flag.
+
+If an interrupted download was detected outside of the cache window (less than 24 hours old), the command will offer a choice:
 
 ```
 Found a recent download from 2 hours ago with 76 table dumps.
