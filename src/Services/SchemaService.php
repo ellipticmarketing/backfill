@@ -12,7 +12,7 @@ class SchemaService
      */
     public function getTables(array $exclude = []): array
     {
-        $database = config('database.connections.' . config('database.default') . '.database');
+        $database = config('database.connections.'.config('database.default').'.database');
 
         $result = DB::select(
             'SELECT TABLE_NAME as name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = ?',
@@ -68,7 +68,7 @@ class SchemaService
      */
     public function getRowCount(string $table): int
     {
-        $database = config('database.connections.' . config('database.default') . '.database');
+        $database = config('database.connections.'.config('database.default').'.database');
 
         $result = DB::selectOne(
             'SELECT TABLE_ROWS as count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
@@ -84,7 +84,7 @@ class SchemaService
      */
     public function getForeignKeys(array $tables): array
     {
-        $database = config('database.connections.' . config('database.default') . '.database');
+        $database = config('database.connections.'.config('database.default').'.database');
 
         $fks = DB::select(
             'SELECT TABLE_NAME as `table`, COLUMN_NAME as `column`,

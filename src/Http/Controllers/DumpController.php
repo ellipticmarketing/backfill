@@ -73,7 +73,7 @@ class DumpController
                     'primary_key' => $primaryKey,
                     'has_timestamps' => $hasTimestamps,
                 ]);
-                echo $meta . "\n";
+                echo $meta."\n";
                 echo "-- BEGIN SQL DUMP --\n";
                 flush();
 
@@ -89,7 +89,7 @@ class DumpController
                 });
 
                 if (! $process->isSuccessful()) {
-                    echo "\n-- DUMP ERROR: " . $process->getErrorOutput() . " --\n";
+                    echo "\n-- DUMP ERROR: ".$process->getErrorOutput()." --\n";
                 }
 
                 $tempDb->cleanup($table);
@@ -108,7 +108,7 @@ class DumpController
             }
 
             return response()->json([
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -132,14 +132,14 @@ class DumpController
 
         // If using "tables" strategy, dump from the source DB but only the temp table
         if ($tempDb->getStrategy() === 'tables') {
-            $tempTableName = '_backfill_' . $table;
+            $tempTableName = '_backfill_'.$table;
 
             return array_filter([
                 'mysqldump',
-                '--host=' . $host,
-                '--port=' . $port,
-                '--user=' . $username,
-                $password ? '--password=' . $password : null,
+                '--host='.$host,
+                '--port='.$port,
+                '--user='.$username,
+                $password ? '--password='.$password : null,
                 '--single-transaction',
                 '--quick',
                 '--no-create-info', // We handle schema separately
@@ -155,10 +155,10 @@ class DumpController
         // "database" strategy — dump from the temp database
         return array_filter([
             'mysqldump',
-            '--host=' . $host,
-            '--port=' . $port,
-            '--user=' . $username,
-            $password ? '--password=' . $password : null,
+            '--host='.$host,
+            '--port='.$port,
+            '--user='.$username,
+            $password ? '--password='.$password : null,
             '--single-transaction',
             '--quick',
             '--no-create-info',

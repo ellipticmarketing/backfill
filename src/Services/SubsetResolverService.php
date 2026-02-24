@@ -5,7 +5,9 @@ namespace Elliptic\Backfill\Services;
 class SubsetResolverService
 {
     protected SchemaService $schema;
+
     protected array $limits;
+
     protected string $sourceDatabase;
 
     public function __construct(SchemaService $schema, array $limits, string $sourceDatabase)
@@ -23,17 +25,18 @@ class SubsetResolverService
     /**
      * Builds a purely stateless SQL query against the SOURCE database that returns
      * all primary keys for the rows of `$table` that should be kept.
-     * 
+     *
      * This organically handles Top-Down limits (orphaned children are deleted) and
      * Bottom-Up inclusions (parents of kept children are kept).
      */
     public function buildKeepQuery(string $table, array $path = []): string
     {
         $pk = $this->schema->getPrimaryKey($table)[0] ?? 'id';
-        
+
         // Prevent infinite loops in circular foreign keys
         if (in_array($table, $path)) {
             $tableRef = $this->getTableRef($table);
+
             return "SELECT `{$pk}` FROM {$tableRef}";
         }
         $path[] = $table;
@@ -45,7 +48,7 @@ class SubsetResolverService
         // If a child table has a specific limit configured, its "kept" rows force their parents to be kept.
         $allFks = $this->schema->getForeignKeys($this->schema->getTables());
         $childFks = array_filter($allFks, fn ($fk) => $fk['referenced_table'] === $table);
-        
+
         foreach ($childFks as $fk) {
             $childTable = $fk['table'];
             // Only apply bottom-up inclusion from children that actually have a configured limit.
@@ -54,7 +57,7 @@ class SubsetResolverService
                 $childFkCol = $fk['column'];
                 $childPk = $this->schema->getPrimaryKey($childTable)[0] ?? 'id';
                 $childKeepQuery = $this->buildKeepQuery($childTable, $path);
-                
+
                 $childTableRef = $this->getTableRef($childTable);
                 $queries[] = "SELECT `{$childFkCol}` FROM {$childTableRef} WHERE `{$childPk}` IN ({$childKeepQuery}) AND `{$childFkCol}` IS NOT NULL";
             }
@@ -65,15 +68,15 @@ class SubsetResolverService
         // 3. Top-Down Exclusions
         // Keep a candidate row ONLY if its parent(s) are ALSO kept.
         $parentFks = array_filter($allFks, fn ($fk) => $fk['table'] === $table);
-        
+
         $finalWheres = ["`{$pk}` IN ({$baseSet})"];
 
         foreach ($parentFks as $fk) {
             $parentTable = $fk['referenced_table'];
             $parentCol = $fk['column'];
-            
-            // Optimization: If the parent has NO limit, and NO children with limits, 
-            // the parent keep query evaluates to "all rows". We only add the where 
+
+            // Optimization: If the parent has NO limit, and NO children with limits,
+            // the parent keep query evaluates to "all rows". We only add the where
             // clause if it actually restricts the dataset.
             if ($this->tableHasLimitsAnywhere($parentTable, [])) {
                 $parentKeepQuery = $this->buildKeepQuery($parentTable, $path);
@@ -83,17 +86,18 @@ class SubsetResolverService
         }
 
         $tableRef = $this->getTableRef($table);
-        return "SELECT `{$pk}` FROM {$tableRef} WHERE " . implode(' AND ', $finalWheres);
+
+        return "SELECT `{$pk}` FROM {$tableRef} WHERE ".implode(' AND ', $finalWheres);
     }
 
     protected function getIntrinsicQuery(string $table): string
     {
         $pk = $this->schema->getPrimaryKey($table)[0] ?? 'id';
         $config = $this->limits[$table] ?? [];
-        
+
         $tableRef = $this->getTableRef($table);
         $query = "SELECT `{$pk}` FROM {$tableRef}";
-        
+
         // No limits = keep everything
         if (empty($config)) {
             return $query;
@@ -113,9 +117,9 @@ class SubsetResolverService
             $cutoff = now()->subDays($keepDays)->toDateTimeString();
             $wheres[] = "`{$orderBy}` >= '{$cutoff}'";
         }
-        
+
         if (! empty($wheres)) {
-            $query .= " WHERE " . implode(' AND ', $wheres);
+            $query .= ' WHERE '.implode(' AND ', $wheres);
         }
 
         if ($maxRows !== null) {

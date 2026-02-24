@@ -19,7 +19,7 @@ class RowLimiterService
     ): void {
         $pk = $schema->getPrimaryKey($table)[0] ?? 'id';
         $qualifiedTable = $tempDb->qualifiedTableName($table);
-        
+
         $keepSql = $resolver->buildKeepQuery($table);
 
         // Delete any row from the temp table that is NOT in the precise keep query

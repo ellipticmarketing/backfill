@@ -15,7 +15,7 @@ class ManifestController
 
         if ($driver !== 'mysql' && $driver !== 'mariadb' && ! app()->runningUnitTests()) {
             return response()->json([
-                'error' => 'Backfill requires a MySQL or MariaDB connection. Current driver: ' . $driver,
+                'error' => 'Backfill requires a MySQL or MariaDB connection. Current driver: '.$driver,
             ], 400);
         }
 
@@ -56,12 +56,12 @@ class ManifestController
             return response()->json([
                 'tables' => $manifest,
                 'table_order' => $sorted,
-                'database' => config('database.connections.' . config('database.default') . '.database'),
+                'database' => config('database.connections.'.config('database.default').'.database'),
                 'server_time' => now()->toIso8601String(),
             ]);
         } catch (\Throwable $e) {
             return response()->json([
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
