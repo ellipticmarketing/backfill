@@ -443,11 +443,11 @@ class PullCommand extends Command
             return;
         }
 
-        $dirs = glob($appDir . '/backfill-*', GLOB_ONLYDIR);
+        $dirs = glob($appDir.'/backfill-*', GLOB_ONLYDIR);
         $cacheHours = config('backfill.client.local_cache_hours', 1);
 
         foreach ($dirs as $dir) {
-            $metaFile = $dir . DIRECTORY_SEPARATOR . '.backfill-meta.json';
+            $metaFile = $dir.DIRECTORY_SEPARATOR.'.backfill-meta.json';
 
             if (file_exists($metaFile)) {
                 $meta = json_decode(file_get_contents($metaFile), true);
