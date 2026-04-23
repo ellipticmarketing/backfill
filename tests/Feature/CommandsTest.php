@@ -1,5 +1,9 @@
 <?php
 
+use Elliptic\Backfill\Services\ImportService;
+use Elliptic\Backfill\Services\SyncClient;
+use Illuminate\Support\Facades\File;
+
 it('blocks pull on non-allowed environments', function () {
     config(['backfill.client.allowed_environments' => ['local', 'staging']]);
     app()->detectEnvironment(fn () => 'production');
@@ -35,4 +39,74 @@ it('registers the install command', function () {
     $this->artisan('backfill:install --help')
         ->expectsOutputToContain('Generate a sync token')
         ->assertExitCode(0);
+});
+
+it('downloads missing tables when a recent cache is only partially complete', function () {
+    File::delete(storage_path('backfill-state.json'));
+
+    $cacheDir = storage_path('app/backfill-partial-cache');
+    File::deleteDirectory($cacheDir);
+    File::ensureDirectoryExists($cacheDir);
+
+    $manifest = [
+        'server_time' => '2026-04-23T12:00:00Z',
+        'table_order' => ['users', 'orders', 'products'],
+        'tables' => [
+            'users' => ['row_count' => 3, 'columns' => []],
+            'orders' => ['row_count' => 2, 'columns' => []],
+            'products' => ['row_count' => 1, 'columns' => []],
+        ],
+    ];
+
+    File::put($cacheDir.'/.backfill-meta.json', json_encode([
+        'downloaded_at' => now()->toIso8601String(),
+        'mode' => 'full',
+        'table_order' => ['users'],
+        'table_info' => ['users' => ['row_count' => 3, 'columns' => []]],
+    ], JSON_PRETTY_PRINT));
+    File::put($cacheDir.'/users.sql', '-- cached users dump');
+
+    $client = \Mockery::mock(SyncClient::class);
+    $client->shouldReceive('getManifest')
+        ->once()
+        ->with(null)
+        ->andReturn($manifest);
+    $client->shouldReceive('downloadTableDump')
+        ->once()
+        ->with('orders', $cacheDir, null)
+        ->andReturnUsing(fn () => File::put($cacheDir.'/orders.sql', '-- downloaded orders dump'));
+    $client->shouldReceive('downloadTableDump')
+        ->once()
+        ->with('products', $cacheDir, null)
+        ->andReturnUsing(fn () => File::put($cacheDir.'/products.sql', '-- downloaded products dump'));
+
+    $importer = \Mockery::mock(ImportService::class);
+    $importer->shouldReceive('importSqlDump')->once()->withArgs(function ($table, $path, $isDelta) {
+        return $table === 'users'
+            && str_replace('\\', '/', $path) === str_replace('\\', '/', storage_path('app/backfill-partial-cache/users.sql'))
+            && $isDelta === false;
+    })->andReturn(3);
+    $importer->shouldReceive('importSqlDump')->once()->withArgs(function ($table, $path, $isDelta) {
+        return $table === 'orders'
+            && str_replace('\\', '/', $path) === str_replace('\\', '/', storage_path('app/backfill-partial-cache/orders.sql'))
+            && $isDelta === false;
+    })->andReturn(2);
+    $importer->shouldReceive('importSqlDump')->once()->withArgs(function ($table, $path, $isDelta) {
+        return $table === 'products'
+            && str_replace('\\', '/', $path) === str_replace('\\', '/', storage_path('app/backfill-partial-cache/products.sql'))
+            && $isDelta === false;
+    })->andReturn(1);
+
+    app()->instance(SyncClient::class, $client);
+    app()->instance(ImportService::class, $importer);
+
+    try {
+        $this->artisan('backfill:pull --full --force')
+            ->expectsOutputToContain('Using local copy')
+            ->expectsOutputToContain('Tables: 3')
+            ->assertExitCode(0);
+    } finally {
+        File::deleteDirectory($cacheDir);
+        File::delete(storage_path('backfill-state.json'));
+    }
 });

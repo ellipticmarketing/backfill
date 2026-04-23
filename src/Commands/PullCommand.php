@@ -171,30 +171,38 @@ class PullCommand extends Command
         $isCached = false;
         $tempDir = $this->resolveDownloadDirectory($tableOrder, $tableInfo, $isCached);
 
-        if ($isCached) {
-            $this->newLine();
+        $tablesToDownload = array_values(array_filter($tableOrder, function ($table) use ($tempDir, $tableInfo, $isDelta) {
+            $info = $tableInfo[$table] ?? [];
+            $isDeltaTable = $isDelta && ($info['has_timestamps'] ?? false);
+
+            if ($isDeltaTable && isset($info['delta_count']) && $info['delta_count'] === 0) {
+                return false;
+            }
+
+            return ! file_exists($tempDir.DIRECTORY_SEPARATOR."{$table}.sql");
+        }));
+
+        $this->newLine();
+
+        if ($isCached && empty($tablesToDownload)) {
             $this->info('📥 Phase 1: Using locally cached tables...');
+        } elseif ($isCached) {
+            $this->info('📥 Phase 1: Using locally cached tables and downloading missing tables...');
         } else {
-            $this->newLine();
             $this->info('📥 Phase 1: Downloading all tables...');
+        }
+
+        if (! empty($tablesToDownload)) {
             $this->newLine();
 
-            $downloadBar = $this->output->createProgressBar($totalTables);
+            $downloadBar = $this->output->createProgressBar(count($tablesToDownload));
             $downloadBar->setFormat(' %current%/%max% [%bar%] %message%');
             $downloadBar->start();
 
-            foreach ($tableOrder as $table) {
+            foreach ($tablesToDownload as $table) {
                 $info = $tableInfo[$table] ?? [];
                 $isDeltaTable = $isDelta && ($info['has_timestamps'] ?? false);
                 $after = $isDeltaTable ? $lastSync : null;
-
-                if ($isDeltaTable && isset($info['delta_count']) && $info['delta_count'] === 0) {
-                    $downloadBar->advance();
-
-                    // we can't emit info text inside progress bar easily without breaking it,
-                    // so we just advance and continue.
-                    continue;
-                }
 
                 $downloadBar->setMessage("Downloading {$table}...");
                 $downloadBar->display();
@@ -213,13 +221,15 @@ class PullCommand extends Command
             $downloadBar->finish();
             $this->newLine(2);
 
-            // Save a timestamp marker so we can detect this download later
+            // Save a timestamp marker so we can detect this download later.
             file_put_contents($tempDir.DIRECTORY_SEPARATOR.'.backfill-meta.json', json_encode([
                 'downloaded_at' => now()->toIso8601String(),
                 'mode' => $mode,
                 'table_order' => $tableOrder,
                 'table_info' => $tableInfo,
             ], JSON_PRETTY_PRINT));
+        } else {
+            $this->newLine();
         }
 
         // ──────────────────────────────────────────────────
