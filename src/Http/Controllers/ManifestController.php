@@ -5,6 +5,7 @@ namespace Elliptic\Backfill\Http\Controllers;
 use Elliptic\Backfill\Services\SchemaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ManifestController
 {
@@ -36,7 +37,7 @@ class ManifestController
 
                 $deltaCount = null;
                 if ($after && $hasTimestamps) {
-                    $deltaCount = \Illuminate\Support\Facades\DB::table($table)
+                    $deltaCount = DB::table($table)
                         ->where('updated_at', '>=', $after)
                         ->orWhere('created_at', '>=', $after)
                         ->count();

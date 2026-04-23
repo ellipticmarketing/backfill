@@ -15,6 +15,7 @@ use Elliptic\Backfill\Services\SanitizationService;
 use Elliptic\Backfill\Services\SyncClient;
 use Elliptic\Backfill\Services\SyncState;
 use Elliptic\Backfill\Services\TempDatabaseService;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Route;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
@@ -48,7 +49,7 @@ class BackfillServiceProvider extends PackageServiceProvider
         }
 
         $this->app->booted(function () {
-            $schedule = $this->app->make(\Illuminate\Console\Scheduling\Schedule::class);
+            $schedule = $this->app->make(Schedule::class);
             $schedule->command('backfill:cleanup --force --max-age=60')
                 ->hourly()
                 ->withoutOverlapping()

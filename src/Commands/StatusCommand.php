@@ -2,6 +2,7 @@
 
 namespace Elliptic\Backfill\Commands;
 
+use Carbon\Carbon;
 use Elliptic\Backfill\Services\SyncState;
 use Illuminate\Console\Command;
 
@@ -37,13 +38,13 @@ class StatusCommand extends Command
 
             $duration = '-';
             if ($entry['completed_at'] && $entry['started_at']) {
-                $started = \Carbon\Carbon::parse($entry['started_at']);
-                $completed = \Carbon\Carbon::parse($entry['completed_at']);
+                $started = Carbon::parse($entry['started_at']);
+                $completed = Carbon::parse($entry['completed_at']);
                 $duration = $started->diffForHumans($completed, true);
             }
 
             $startedFormatted = $entry['started_at']
-                ? \Carbon\Carbon::parse($entry['started_at'])->format('Y-m-d H:i:s')
+                ? Carbon::parse($entry['started_at'])->format('Y-m-d H:i:s')
                 : '-';
 
             $tableData[] = [

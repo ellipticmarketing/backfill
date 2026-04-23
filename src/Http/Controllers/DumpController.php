@@ -9,6 +9,7 @@ use Elliptic\Backfill\Services\SubsetResolverService;
 use Elliptic\Backfill\Services\TempDatabaseService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\Process\Process;
 
@@ -21,7 +22,7 @@ class DumpController
         TempDatabaseService $tempDb,
         SanitizationService $sanitizer,
         RowLimiterService $limiter,
-    ): \Symfony\Component\HttpFoundation\Response {
+    ): Response {
         $excludedTables = config('backfill.exclude_tables', []);
 
         if (in_array($table, $excludedTables)) {

@@ -2,6 +2,7 @@
 
 namespace Elliptic\Backfill\Services;
 
+use Illuminate\Database\Connection;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -68,7 +69,7 @@ class TempDatabaseService
     /**
      * Get the DB facade for the resolved connection.
      */
-    protected function db(): \Illuminate\Database\Connection
+    protected function db(): Connection
     {
         return DB::connection($this->connectionName);
     }

@@ -66,7 +66,7 @@ it('downloads missing tables when a recent cache is only partially complete', fu
     ], JSON_PRETTY_PRINT));
     File::put($cacheDir.'/users.sql', '-- cached users dump');
 
-    $client = \Mockery::mock(SyncClient::class);
+    $client = Mockery::mock(SyncClient::class);
     $client->shouldReceive('getManifest')
         ->once()
         ->with(null)
@@ -80,7 +80,7 @@ it('downloads missing tables when a recent cache is only partially complete', fu
         ->with('products', $cacheDir, null)
         ->andReturnUsing(fn () => File::put($cacheDir.'/products.sql', '-- downloaded products dump'));
 
-    $importer = \Mockery::mock(ImportService::class);
+    $importer = Mockery::mock(ImportService::class);
     $importer->shouldReceive('importSqlDump')->once()->withArgs(function ($table, $path, $isDelta) {
         return $table === 'users'
             && str_replace('\\', '/', $path) === str_replace('\\', '/', storage_path('app/backfill-partial-cache/users.sql'))

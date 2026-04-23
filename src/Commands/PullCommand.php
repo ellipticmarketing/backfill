@@ -2,6 +2,7 @@
 
 namespace Elliptic\Backfill\Commands;
 
+use Elliptic\Backfill\Events\SyncCompleted;
 use Elliptic\Backfill\Services\ImportService;
 use Elliptic\Backfill\Services\SyncClient;
 use Elliptic\Backfill\Services\SyncState;
@@ -361,7 +362,7 @@ class PullCommand extends Command
         $this->table(['Table', 'Rows', 'Note'], $summaryData);
 
         // Dispatch event so apps can run post-sync hooks (cache clear, scout index, etc.)
-        \Elliptic\Backfill\Events\SyncCompleted::dispatch(
+        SyncCompleted::dispatch(
             $mode,
             $syncedTables,
             $totalRowsSynced

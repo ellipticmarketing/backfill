@@ -2,6 +2,7 @@
 
 namespace Elliptic\Backfill\Commands;
 
+use Elliptic\Backfill\Services\SchemaService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -182,7 +183,7 @@ class InstallCommand extends Command
             $this->line('  Scanning local database schema...');
 
             try {
-                $schemaService = app(\Elliptic\Backfill\Services\SchemaService::class);
+                $schemaService = app(SchemaService::class);
                 $tablesList = $schemaService->getTables(config('backfill.exclude_tables', []));
 
                 foreach ($tablesList as $tableName) {

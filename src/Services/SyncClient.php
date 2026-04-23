@@ -51,7 +51,7 @@ class SyncClient
                 $message .= "\n\nRecommendations:\n - Is the elliptic/backfill package installed on the remote server?\n - Make sure the BACKFILL_TOKEN env variable is set and matches on both ends.\n - Make sure BACKFILL_SERVER_ENABLED=true is set on the remote server's .env file.";
             }
 
-            throw new \RuntimeException($message);
+            throw new RuntimeException($message);
         }
 
         return $response->json();
@@ -95,7 +95,7 @@ class SyncClient
                 $message .= "\n\nRecommendations:\n - Is the elliptic/backfill package installed on the remote server?\n - Make sure the BACKFILL_TOKEN env variable is set and matches on both ends.\n - Make sure BACKFILL_SERVER_ENABLED=true is set on the remote server's .env file.";
             }
 
-            throw new \RuntimeException($message);
+            throw new RuntimeException($message);
         }
 
         // The first line of the file is JSON metadata, extract it

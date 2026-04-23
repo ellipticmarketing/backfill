@@ -2,6 +2,7 @@
 
 namespace Elliptic\Backfill\Commands;
 
+use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -28,7 +29,7 @@ class CleanupCommand extends Command
 
         $this->warn('Found '.count($stale).' orphaned temp database(s):');
         foreach ($stale as $db) {
-            $age = now()->diffForHumans(\Carbon\Carbon::createFromTimestamp($db['timestamp']), true);
+            $age = now()->diffForHumans(Carbon::createFromTimestamp($db['timestamp']), true);
             $this->line("   • {$db['name']} (created ~{$age} ago)");
         }
 
