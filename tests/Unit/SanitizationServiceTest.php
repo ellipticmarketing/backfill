@@ -1,6 +1,7 @@
 <?php
 
 use Elliptic\Backfill\Services\SanitizationService;
+use Elliptic\Backfill\Services\SyncClient;
 use Elliptic\Backfill\Services\TempDatabaseService;
 use Illuminate\Support\Facades\DB;
 
@@ -159,3 +160,20 @@ it('sanitizes using the temporary database connection', function () {
 
     $this->service->sanitize('users', ['email' => ['type' => 'email']], $tempDb);
 });
+
+it('rejects a dump response without Backfill metadata', function () {
+    $sourcePath = tempnam(sys_get_temp_dir(), 'backfill-dump-');
+    $destinationPath = tempnam(sys_get_temp_dir(), 'backfill-sql-');
+    file_put_contents($sourcePath, "<!DOCTYPE html>\n<html><body>Server error</body></html>");
+
+    $client = new SyncClient;
+    $method = new ReflectionMethod($client, 'extractMetaFromDump');
+    $method->setAccessible(true);
+
+    try {
+        $method->invoke($client, $sourcePath, $destinationPath);
+    } finally {
+        @unlink($sourcePath);
+        @unlink($destinationPath);
+    }
+})->throws(RuntimeException::class, 'valid Backfill metadata');

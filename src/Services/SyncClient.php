@@ -118,7 +118,7 @@ class SyncClient
     {
         $handle = fopen($sourcePath, 'r');
         if (! $handle) {
-            return [];
+            throw new RuntimeException("Unable to read Backfill dump from '{$sourcePath}'.");
         }
 
         // First line is JSON meta
@@ -126,7 +126,13 @@ class SyncClient
         // Second line is "-- BEGIN SQL DUMP --"
         $markerLine = fgets($handle);
 
-        $meta = json_decode(trim($metaLine), true) ?? [];
+        $meta = json_decode(trim($metaLine), true);
+
+        if (! is_array($meta) || trim((string) $markerLine) !== '-- BEGIN SQL DUMP --') {
+            fclose($handle);
+
+            throw new RuntimeException('Downloaded response does not contain valid Backfill metadata and SQL dump content.');
+        }
 
         // Write the remaining SQL content to the final destination
         $destHandle = fopen($destPath, 'w');
