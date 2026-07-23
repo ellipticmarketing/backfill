@@ -138,6 +138,31 @@ class SyncClient
         $destHandle = fopen($destPath, 'w');
 
         while (($line = fgets($handle)) !== false) {
+            $trimmedLine = ltrim($line);
+
+            if (
+                str_starts_with(strtolower($trimmedLine), '<!doctype html')
+                || str_starts_with(strtolower($trimmedLine), '<html')
+            ) {
+                fclose($handle);
+                fclose($destHandle);
+                @unlink($destPath);
+
+                throw new RuntimeException(
+                    'Downloaded Backfill dump contains a server error response. Check the production Laravel log.'
+                );
+            }
+
+            if (str_contains($line, '-- DUMP ERROR:')) {
+                fclose($handle);
+                fclose($destHandle);
+                @unlink($destPath);
+
+                throw new RuntimeException(
+                    'The production mysqldump failed while generating the Backfill dump. Check the production Laravel log.'
+                );
+            }
+
             fwrite($destHandle, $line);
         }
 

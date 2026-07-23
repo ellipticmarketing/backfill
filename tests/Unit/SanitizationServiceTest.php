@@ -177,3 +177,47 @@ it('rejects a dump response without Backfill metadata', function () {
         @unlink($destinationPath);
     }
 })->throws(RuntimeException::class, 'valid Backfill metadata');
+
+it('rejects an HTML error response after valid Backfill metadata', function () {
+    $sourcePath = tempnam(sys_get_temp_dir(), 'backfill-dump-');
+    $destinationPath = tempnam(sys_get_temp_dir(), 'backfill-sql-');
+    file_put_contents(
+        $sourcePath,
+        "{\"primary_key\":\"id\",\"has_timestamps\":true}\n"
+        ."-- BEGIN SQL DUMP --\n"
+        ."<!DOCTYPE html>\n<html><body>Server Error</body></html>"
+    );
+
+    $client = new SyncClient;
+    $method = new ReflectionMethod($client, 'extractMetaFromDump');
+    $method->setAccessible(true);
+
+    try {
+        $method->invoke($client, $sourcePath, $destinationPath);
+    } finally {
+        @unlink($sourcePath);
+        @unlink($destinationPath);
+    }
+})->throws(RuntimeException::class, 'server error response');
+
+it('rejects a mysqldump process error after valid Backfill metadata', function () {
+    $sourcePath = tempnam(sys_get_temp_dir(), 'backfill-dump-');
+    $destinationPath = tempnam(sys_get_temp_dir(), 'backfill-sql-');
+    file_put_contents(
+        $sourcePath,
+        "{\"primary_key\":\"id\",\"has_timestamps\":true}\n"
+        ."-- BEGIN SQL DUMP --\n"
+        ."-- DUMP ERROR: mysqldump: command not found --\n"
+    );
+
+    $client = new SyncClient;
+    $method = new ReflectionMethod($client, 'extractMetaFromDump');
+    $method->setAccessible(true);
+
+    try {
+        $method->invoke($client, $sourcePath, $destinationPath);
+    } finally {
+        @unlink($sourcePath);
+        @unlink($destinationPath);
+    }
+})->throws(RuntimeException::class, 'mysqldump failed');

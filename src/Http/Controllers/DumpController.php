@@ -5,6 +5,7 @@ namespace Elliptic\Backfill\Http\Controllers;
 use Elliptic\Backfill\Services\RowLimiterService;
 use Elliptic\Backfill\Services\SanitizationService;
 use Elliptic\Backfill\Services\SchemaService;
+use Elliptic\Backfill\Services\ServerRequirementsService;
 use Elliptic\Backfill\Services\SubsetResolverService;
 use Elliptic\Backfill\Services\TempDatabaseService;
 use Illuminate\Http\Request;
@@ -22,6 +23,7 @@ class DumpController
         TempDatabaseService $tempDb,
         SanitizationService $sanitizer,
         RowLimiterService $limiter,
+        ServerRequirementsService $requirements,
     ): Response {
         $excludedTables = config('backfill.exclude_tables', []);
 
@@ -38,6 +40,8 @@ class DumpController
         $after = $request->input('after'); // ISO 8601 timestamp for delta sync
 
         try {
+            $mysqldumpPath = $requirements->ensureRequirementsAreMet();
+
             // Prepare: copy → sanitize → limit, all in a temp space
             $tempDb->prepare($table);
 
@@ -64,7 +68,7 @@ class DumpController
             }
 
             // Run mysqldump on the temp copy and stream gzipped output
-            $dumpArgs = $this->buildMysqldumpArgs($tempDb, $table);
+            $dumpArgs = $this->buildMysqldumpArgs($tempDb, $table, $mysqldumpPath);
             $primaryKey = $schema->getPrimaryKey($table);
             $hasTimestamps = $schema->hasTimestamps($table);
 
@@ -117,8 +121,11 @@ class DumpController
     /**
      * Build the mysqldump command arguments for a single table in the temp space.
      */
-    protected function buildMysqldumpArgs(TempDatabaseService $tempDb, string $table): array
-    {
+    protected function buildMysqldumpArgs(
+        TempDatabaseService $tempDb,
+        string $table,
+        string $mysqldumpPath,
+    ): array {
         $connection = config('database.default');
         $dbConfig = config("database.connections.{$connection}");
 
@@ -136,7 +143,7 @@ class DumpController
             $tempTableName = '_backfill_'.$table;
 
             return array_filter([
-                'mysqldump',
+                $mysqldumpPath,
                 '--host='.$host,
                 '--port='.$port,
                 '--user='.$username,
@@ -155,7 +162,7 @@ class DumpController
 
         // "database" strategy — dump from the temp database
         return array_filter([
-            'mysqldump',
+            $mysqldumpPath,
             '--host='.$host,
             '--port='.$port,
             '--user='.$username,
