@@ -32,7 +32,7 @@ class SanitizationService
             }
 
             $sql = $this->buildUpdateSql($table, $column, $expression, $excludes, $tempDb);
-            DB::statement($sql);
+            DB::connection($tempDb->getConnectionName())->statement($sql);
         }
     }
 

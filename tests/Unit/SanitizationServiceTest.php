@@ -2,6 +2,7 @@
 
 use Elliptic\Backfill\Services\SanitizationService;
 use Elliptic\Backfill\Services\TempDatabaseService;
+use Illuminate\Support\Facades\DB;
 
 beforeEach(function () {
     config(['backfill.server.temp_strategy' => 'tables']);
@@ -137,4 +138,24 @@ it('builds simple UPDATE SQL without excludes', function () {
 
     expect($result)->not->toContain('CASE');
     expect($result)->toContain("UPDATE `_backfill_temp`.`users` SET `name` = CONCAT('User_', `id`)");
+});
+
+it('sanitizes using the temporary database connection', function () {
+    $tempDb = Mockery::mock(TempDatabaseService::class);
+    $tempDb->shouldReceive('qualifiedTableName')
+        ->with('users')
+        ->andReturn('`_backfill_temp`.`users`');
+    $tempDb->shouldReceive('getConnectionName')
+        ->once()
+        ->andReturn('BACKFILL_temp');
+
+    DB::shouldReceive('connection')
+        ->once()
+        ->with('BACKFILL_temp')
+        ->andReturnSelf();
+    DB::shouldReceive('statement')
+        ->once()
+        ->with("UPDATE `_backfill_temp`.`users` SET `email` = CONCAT(UUID(), '@example.test')");
+
+    $this->service->sanitize('users', ['email' => ['type' => 'email']], $tempDb);
 });
