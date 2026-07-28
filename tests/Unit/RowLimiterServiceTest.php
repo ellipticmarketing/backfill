@@ -219,4 +219,46 @@ class RowLimiterServiceTest extends TestCase
         $this->assertContains(3, $remainingIds);
         $this->assertNotContains(2, $remainingIds);
     }
+
+    public function test_it_skips_post_copy_limiting_for_tables_without_a_primary_key(): void
+    {
+        $schema = \Mockery::mock(SchemaService::class);
+        $schema->shouldReceive('getPrimaryKey')
+            ->once()
+            ->with('settings')
+            ->andReturn([]);
+
+        $tempDatabase = \Mockery::mock(TempDatabaseService::class);
+        $tempDatabase->shouldNotReceive('qualifiedTableName');
+
+        $resolver = \Mockery::mock(SubsetResolverService::class);
+        $resolver->shouldNotReceive('buildKeepQuery');
+
+        $this->service->apply(
+            'settings',
+            $tempDatabase,
+            $resolver,
+            $schema,
+        );
+    }
+
+    public function test_it_rejects_a_configured_limit_for_a_table_without_a_primary_key(): void
+    {
+        $schema = \Mockery::mock(SchemaService::class);
+        $schema->shouldReceive('getPrimaryKey')
+            ->once()
+            ->with('settings')
+            ->andReturn([]);
+
+        $resolver = new SubsetResolverService($schema, [
+            'settings' => ['max_rows' => 10],
+        ], '');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage(
+            "Cannot limit table 'settings' because it does not have a primary key."
+        );
+
+        $resolver->buildKeepQuery('settings');
+    }
 }

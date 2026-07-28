@@ -265,6 +265,10 @@ END
 
 Limits the number of rows synced for specific tables. Useful for large log, audit, or analytics tables where you only need recent data for development.
 
+The resolved subset is applied during the initial copy into the temporary workspace. A limited production table is not duplicated in full and pruned afterward, so limits also cap temporary disk usage for very large tables.
+
+Tables without a primary key can still be synced in full. Configuring a limit for one fails with a clear error because Backfill cannot identify a stable row subset safely.
+
 The package resolves foreign key dependencies utilizing a **Stateless Subset Resolver**:
 - **Bottom-Up Inclusion:** If a child table has no limit (e.g., you want all recent `cars`), the package organically keeps *all parent rows* referenced by those cars, even if the parent table itself has a limit (e.g., `users`).
 - **Top-Down Exclusion:** If a parent row evaluates as too old and gets discarded, any child rows referencing that orphaned parent are automatically removed as well.
@@ -481,9 +485,9 @@ Local (Client)                          Production (Server)
                                         
 2. GET /dump/users ────────────────────▶ CREATE DATABASE _backfill_temp_*
    GET /dump/orders                      CREATE TABLE ... LIKE ...
-   GET /dump/...                         INSERT INTO temp SELECT * FROM prod
+   GET /dump/...                         INSERT INTO temp SELECT subset FROM prod
    (all tables downloaded first)         UPDATE temp (sanitize via SQL)
-                  ◀── streamed .sql ─── DELETE excess rows (limits)
+                  ◀── streamed .sql ─── VERIFY subset (idempotent limit)
                                          DROP temp table
 
 ── Phase 2: Schema Comparison ─────────

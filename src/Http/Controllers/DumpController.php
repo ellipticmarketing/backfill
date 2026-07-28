@@ -10,6 +10,7 @@ use Elliptic\Backfill\Services\SubsetResolverService;
 use Elliptic\Backfill\Services\TempDatabaseService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\Process\Process;
@@ -42,8 +43,28 @@ class DumpController
         try {
             $mysqldumpPath = $requirements->ensureRequirementsAreMet();
 
-            // Prepare: copy → sanitize → limit, all in a temp space
-            $tempDb->prepare($table);
+            $limits = config('backfill.limits', []);
+            $resolver = null;
+            $primaryKey = $schema->getPrimaryKey($table)[0] ?? null;
+
+            if (! empty($limits)) {
+                if ($primaryKey === null && ! empty($limits[$table])) {
+                    throw new RuntimeException(
+                        "Cannot limit table '{$table}' because it does not have a primary key."
+                    );
+                }
+
+                if ($primaryKey !== null) {
+                    $resolver = new SubsetResolverService($schema, $limits, $tempDb->getSourceDatabase());
+                }
+            }
+
+            // Prepare: subset copy → sanitize → verify limit, all in a temp space
+            $tempDb->prepare(
+                $table,
+                $resolver?->buildKeepQuery($table),
+                $primaryKey ?? 'id',
+            );
 
             // Apply sanitization rules via SQL UPDATE
             $sanitizeRules = config("backfill.sanitize.{$table}", []);
@@ -52,9 +73,7 @@ class DumpController
             }
 
             // Apply row limits via stateless subset queries
-            $limits = config('backfill.limits', []);
-            if (! empty($limits)) {
-                $resolver = new SubsetResolverService($schema, $limits, $tempDb->getSourceDatabase());
+            if ($resolver !== null) {
                 $limiter->apply($table, $tempDb, $resolver, $schema);
             }
 

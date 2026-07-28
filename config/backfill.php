@@ -128,7 +128,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | Limit how many rows are synced for specific tables. Useful for large
-    | log or audit tables where you only need recent data.
+    | log or audit tables where you only need recent data. The resolved subset
+    | is applied while copying into the temporary workspace, so production-sized
+    | tables are never duplicated in full when limits are configured.
     |
     | When rows are limited, the package automatically resolves foreign key
     | dependencies to avoid orphan records — child rows referencing deleted
@@ -139,6 +141,8 @@ return [
     |   'max_rows'  => (optional) Maximum number of rows to keep
     |   'order_by'  => (optional) Column to sort/filter by (default: primary key)
     |   'direction' => (optional) 'desc' or 'asc' (default: 'desc')
+    |
+    | Tables without a primary key may be synced in full, but cannot be limited.
     |
     */
 

@@ -17,7 +17,12 @@ class RowLimiterService
         SubsetResolverService $resolver,
         SchemaService $schema
     ): void {
-        $pk = $schema->getPrimaryKey($table)[0] ?? 'id';
+        $pk = $schema->getPrimaryKey($table)[0] ?? null;
+
+        if ($pk === null) {
+            return;
+        }
+
         $qualifiedTable = $tempDb->qualifiedTableName($table);
 
         $keepSql = $resolver->buildKeepQuery($table);

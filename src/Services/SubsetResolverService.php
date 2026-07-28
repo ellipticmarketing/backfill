@@ -2,6 +2,8 @@
 
 namespace Elliptic\Backfill\Services;
 
+use RuntimeException;
+
 class SubsetResolverService
 {
     protected SchemaService $schema;
@@ -31,7 +33,19 @@ class SubsetResolverService
      */
     public function buildKeepQuery(string $table, array $path = []): string
     {
-        $pk = $this->schema->getPrimaryKey($table)[0] ?? 'id';
+        $pk = $this->schema->getPrimaryKey($table)[0] ?? null;
+
+        if ($pk === null) {
+            if (! empty($this->limits[$table])) {
+                throw new RuntimeException(
+                    "Cannot limit table '{$table}' because it does not have a primary key."
+                );
+            }
+
+            throw new RuntimeException(
+                "Cannot resolve a subset for table '{$table}' because it does not have a primary key."
+            );
+        }
 
         // Prevent infinite loops in circular foreign keys
         if (in_array($table, $path)) {
@@ -92,8 +106,14 @@ class SubsetResolverService
 
     protected function getIntrinsicQuery(string $table): string
     {
-        $pk = $this->schema->getPrimaryKey($table)[0] ?? 'id';
+        $pk = $this->schema->getPrimaryKey($table)[0] ?? null;
         $config = $this->limits[$table] ?? [];
+
+        if ($pk === null) {
+            throw new RuntimeException(
+                "Cannot limit table '{$table}' because it does not have a primary key."
+            );
+        }
 
         $tableRef = $this->getTableRef($table);
         $query = "SELECT `{$pk}` FROM {$tableRef}";

@@ -76,13 +76,19 @@ class TempDatabaseService
 
     /**
      * Prepare a table for safe reading — copy it to a temp space and sanitize there.
+     *
+     * When a keep query is provided, only matching rows are copied from the source.
+     * This prevents limited tables from being duplicated in full before limiting.
      */
-    public function prepare(string $table): void
-    {
+    public function prepare(
+        string $table,
+        ?string $keepQuery = null,
+        string $primaryKey = 'id',
+    ): void {
         if ($this->strategy === 'database') {
-            $this->prepareWithDatabase($table);
+            $this->prepareWithDatabase($table, $keepQuery, $primaryKey);
         } else {
-            $this->prepareWithTables($table);
+            $this->prepareWithTables($table, $keepQuery, $primaryKey);
         }
     }
 
@@ -209,18 +215,23 @@ class TempDatabaseService
     // Strategy: Temporary Database
     // -------------------------------------------------------------------------
 
-    protected function prepareWithDatabase(string $table): void
-    {
+    protected function prepareWithDatabase(
+        string $table,
+        ?string $keepQuery,
+        string $primaryKey,
+    ): void {
         $this->ensureTempDatabase();
 
         $this->preparedDatabaseTables[] = $table;
+        $sourceTable = "`{$this->sourceDatabase}`.`{$table}`";
+        $selection = $this->buildSourceSelection($sourceTable, $keepQuery, $primaryKey);
 
         // Create the table structure and copy data
         $this->db()->statement(
-            "CREATE TABLE IF NOT EXISTS `{$this->tempDatabase}`.`{$table}` LIKE `{$this->sourceDatabase}`.`{$table}`"
+            "CREATE TABLE IF NOT EXISTS `{$this->tempDatabase}`.`{$table}` LIKE {$sourceTable}"
         );
         $this->db()->statement(
-            "INSERT INTO `{$this->tempDatabase}`.`{$table}` SELECT * FROM `{$this->sourceDatabase}`.`{$table}`"
+            "INSERT INTO `{$this->tempDatabase}`.`{$table}` {$selection}"
         );
     }
 
@@ -264,20 +275,39 @@ class TempDatabaseService
     // Strategy: Temporary Tables (same database)
     // -------------------------------------------------------------------------
 
-    protected function prepareWithTables(string $table): void
-    {
+    protected function prepareWithTables(
+        string $table,
+        ?string $keepQuery,
+        string $primaryKey,
+    ): void {
         $tempName = '_backfill_'.$table;
         $this->tempTables[$table] = $tempName;
+        $sourceTable = "`{$table}`";
+        $selection = $this->buildSourceSelection($sourceTable, $keepQuery, $primaryKey);
 
         $this->db()->statement("DROP TABLE IF EXISTS `{$tempName}`");
 
         if (app()->runningUnitTests()) {
-            $this->db()->statement("CREATE TABLE `{$tempName}` AS SELECT * FROM `{$table}`");
+            $this->db()->statement("CREATE TABLE `{$tempName}` AS {$selection}");
 
             return;
         }
 
         $this->db()->statement("CREATE TABLE `{$tempName}` LIKE `{$table}`");
-        $this->db()->statement("INSERT INTO `{$tempName}` SELECT * FROM `{$table}`");
+        $this->db()->statement("INSERT INTO `{$tempName}` {$selection}");
+    }
+
+    protected function buildSourceSelection(
+        string $sourceTable,
+        ?string $keepQuery,
+        string $primaryKey,
+    ): string {
+        $selection = "SELECT * FROM {$sourceTable}";
+
+        if ($keepQuery !== null) {
+            $selection .= " WHERE `{$primaryKey}` IN ({$keepQuery})";
+        }
+
+        return $selection;
     }
 }
