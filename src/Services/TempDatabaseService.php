@@ -349,7 +349,10 @@ class TempDatabaseService
                 throw new RuntimeException('A primary key is required to copy a limited table.');
             }
 
-            $selection .= " WHERE `{$primaryKey}` IN ({$keepQuery})";
+            $limitedIds = "SELECT `_backfill_limited_ids`.`{$primaryKey}`"
+                ." FROM ({$keepQuery}) AS `_backfill_limited_ids`";
+
+            $selection .= " WHERE `{$primaryKey}` IN ({$limitedIds})";
         }
 
         return $selection;

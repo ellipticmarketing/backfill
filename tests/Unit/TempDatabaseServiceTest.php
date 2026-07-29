@@ -104,7 +104,7 @@ class TempDatabaseServiceTest extends TestCase
         $connection->shouldReceive('affectingStatement')
             ->once()
             ->with(
-                'INSERT INTO `_backfill_test`.`logs` SELECT * FROM `production`.`logs` WHERE `id` IN (SELECT `id` FROM `production`.`logs` LIMIT 10) ORDER BY `id` ASC LIMIT 2',
+                'INSERT INTO `_backfill_test`.`logs` SELECT * FROM `production`.`logs` WHERE `id` IN (SELECT `_backfill_limited_ids`.`id` FROM (SELECT `id` FROM `production`.`logs` LIMIT 10) AS `_backfill_limited_ids`) ORDER BY `id` ASC LIMIT 2',
                 [],
             )
             ->andReturn(2)
@@ -117,7 +117,7 @@ class TempDatabaseServiceTest extends TestCase
         $connection->shouldReceive('affectingStatement')
             ->once()
             ->with(
-                'INSERT INTO `_backfill_test`.`logs` SELECT * FROM `production`.`logs` WHERE `id` IN (SELECT `id` FROM `production`.`logs` LIMIT 10) AND `id` > ? ORDER BY `id` ASC LIMIT 2',
+                'INSERT INTO `_backfill_test`.`logs` SELECT * FROM `production`.`logs` WHERE `id` IN (SELECT `_backfill_limited_ids`.`id` FROM (SELECT `id` FROM `production`.`logs` LIMIT 10) AS `_backfill_limited_ids`) AND `id` > ? ORDER BY `id` ASC LIMIT 2',
                 [2],
             )
             ->andReturn(1)
