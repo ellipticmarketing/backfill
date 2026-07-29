@@ -10,6 +10,7 @@ SQL;
 
     $expectedSql = <<<'SQL'
 SET FOREIGN_KEY_CHECKS=0;
+SET TIME_ZONE='+00:00';
 REPLACE INTO `users` (`id`) VALUES (1);
 REPLACE INTO `users` (`id`) VALUES (2);
 SET FOREIGN_KEY_CHECKS=1;
@@ -57,6 +58,7 @@ it('keeps incomplete replacement prefixes at the end of a dump', function () {
 
         expect(file_get_contents($destinationPath))->toBe(
             "SET FOREIGN_KEY_CHECKS=0;\n"
+            ."SET TIME_ZONE='+00:00';\n"
             ."INSERT INTO `users` (`id`) VALUES (1);\n"
             .'SELECT "INSERT INT";'
             ."\nSET FOREIGN_KEY_CHECKS=1;\n",

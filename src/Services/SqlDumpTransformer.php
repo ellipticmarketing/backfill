@@ -44,7 +44,10 @@ class SqlDumpTransformer
         $deleteDestination = false;
 
         try {
-            $this->writeAll($destination, "SET FOREIGN_KEY_CHECKS=0;\n");
+            $this->writeAll(
+                $destination,
+                "SET FOREIGN_KEY_CHECKS=0;\nSET TIME_ZONE='+00:00';\n",
+            );
 
             $pending = '';
 
