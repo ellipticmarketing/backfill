@@ -226,9 +226,11 @@ class TempDatabaseService
         $sourceTable = "`{$this->sourceDatabase}`.`{$table}`";
         $selection = $this->buildSourceSelection($sourceTable, $keepQuery, $primaryKey);
 
-        // Create the table structure and copy data
         $this->db()->statement(
-            "CREATE TABLE IF NOT EXISTS `{$this->tempDatabase}`.`{$table}` LIKE {$sourceTable}"
+            "DROP TABLE IF EXISTS `{$this->tempDatabase}`.`{$table}`"
+        );
+        $this->db()->statement(
+            "CREATE TABLE `{$this->tempDatabase}`.`{$table}` LIKE {$sourceTable}"
         );
         $this->db()->statement(
             "INSERT INTO `{$this->tempDatabase}`.`{$table}` {$selection}"

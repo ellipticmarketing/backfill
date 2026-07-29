@@ -70,7 +70,7 @@ class TempDatabaseServiceTest extends TestCase
         Schema::dropIfExists('logs');
     }
 
-    public function test_database_strategy_applies_the_keep_query_during_insert(): void
+    public function test_database_strategy_replaces_a_stale_table_and_applies_the_keep_query(): void
     {
         config([
             'backfill.server.temp_strategy' => 'database',
@@ -92,14 +92,21 @@ class TempDatabaseServiceTest extends TestCase
             ->andReturn([(object) ['SCHEMA_NAME' => '_backfill_test']]);
         $connection->shouldReceive('statement')
             ->once()
-            ->with('CREATE TABLE IF NOT EXISTS `_backfill_test`.`logs` LIKE `production`.`logs`')
-            ->andReturnTrue();
+            ->with('DROP TABLE IF EXISTS `_backfill_test`.`logs`')
+            ->andReturnTrue()
+            ->ordered();
+        $connection->shouldReceive('statement')
+            ->once()
+            ->with('CREATE TABLE `_backfill_test`.`logs` LIKE `production`.`logs`')
+            ->andReturnTrue()
+            ->ordered();
         $connection->shouldReceive('statement')
             ->once()
             ->with(
                 'INSERT INTO `_backfill_test`.`logs` SELECT * FROM `production`.`logs` WHERE `id` IN (SELECT `id` FROM `production`.`logs` LIMIT 10)',
             )
-            ->andReturnTrue();
+            ->andReturnTrue()
+            ->ordered();
 
         $tempDatabase = new TempDatabaseService;
         $tempDatabase->prepare(
