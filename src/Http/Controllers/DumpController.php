@@ -47,16 +47,16 @@ class DumpController
 
             $limits = config('backfill.limits', []);
             $resolver = null;
-            $primaryKey = $schema->getPrimaryKey($table)[0] ?? null;
+            $primaryKeyColumn = $schema->getPrimaryKey($table)[0] ?? null;
 
             if (! empty($limits)) {
-                if ($primaryKey === null && ! empty($limits[$table])) {
+                if ($primaryKeyColumn === null && ! empty($limits[$table])) {
                     throw new RuntimeException(
                         "Cannot limit table '{$table}' because it does not have a primary key."
                     );
                 }
 
-                if ($primaryKey !== null) {
+                if ($primaryKeyColumn !== null) {
                     $resolver = new SubsetResolverService(
                         $schema,
                         $limits,
@@ -66,52 +66,27 @@ class DumpController
                 }
             }
 
-            // Prepare: subset copy → sanitize → verify limit, all in a temp space
-            $tempDb->prepare(
-                $table,
-                $resolver?->buildKeepQuery($table),
-                $primaryKey ?? 'id',
-            );
-
-            // Apply sanitization rules via SQL UPDATE
             $sanitizeRules = config("backfill.sanitize.{$table}", []);
-            if (! empty($sanitizeRules)) {
-                $sanitizer->sanitize($table, $sanitizeRules, $tempDb);
-            }
-
-            // Apply row limits via stateless subset queries
-            if ($resolver !== null) {
-                $limiter->apply($table, $tempDb, $resolver, $schema);
-            }
-
-            // If delta, delete rows older than the "after" timestamp
-            if ($after && $schema->hasTimestamps($table)) {
-                $qualified = $tempDb->qualifiedTableName($table);
-                DB::statement(
-                    "DELETE FROM {$qualified} WHERE `created_at` < ? AND `updated_at` < ?",
-                    [$after, $after]
-                );
-            }
-
-            // Stream the temp copy through mysqldump when available, otherwise
-            // use the PHP-native fallback for restricted PHP-FPM runtimes.
-            $dumpArgs = $mysqldumpPath === null
-                ? null
-                : $this->buildMysqldumpArgs($tempDb, $table, $mysqldumpPath);
             $primaryKey = $schema->getPrimaryKey($table);
             $columns = $schema->getColumns($table);
             $hasTimestamps = $schema->hasTimestamps($table);
 
             return new StreamedResponse(function () use (
-                $dumpArgs,
                 $tempDb,
                 $table,
                 $primaryKey,
+                $primaryKeyColumn,
                 $columns,
                 $hasTimestamps,
                 $nativeDumper,
+                $mysqldumpPath,
+                $resolver,
+                $sanitizeRules,
+                $sanitizer,
+                $limiter,
+                $schema,
+                $after,
             ) {
-                // First, send a small JSON header line with metadata, then the SQL dump
                 $meta = json_encode([
                     'primary_key' => $primaryKey,
                     'has_timestamps' => $hasTimestamps,
@@ -121,6 +96,38 @@ class DumpController
                 flush();
 
                 try {
+                    // Start the response before preparing large tables so reverse
+                    // proxies do not time out while waiting for the first byte.
+                    $tempDb->prepare(
+                        $table,
+                        $resolver?->buildKeepQuery($table),
+                        $primaryKeyColumn,
+                        function (int $rowCount): void {
+                            echo "-- BACKFILL PREPARED {$rowCount} ROWS --\n";
+                            flush();
+                        },
+                    );
+
+                    if (! empty($sanitizeRules)) {
+                        $sanitizer->sanitize($table, $sanitizeRules, $tempDb);
+                    }
+
+                    if ($resolver !== null) {
+                        $limiter->apply($table, $tempDb, $resolver, $schema);
+                    }
+
+                    if ($after && $hasTimestamps) {
+                        $qualified = $tempDb->qualifiedTableName($table);
+                        DB::statement(
+                            "DELETE FROM {$qualified} WHERE `created_at` < ? AND `updated_at` < ?",
+                            [$after, $after]
+                        );
+                    }
+
+                    $dumpArgs = $mysqldumpPath === null
+                        ? null
+                        : $this->buildMysqldumpArgs($tempDb, $table, $mysqldumpPath);
+
                     if ($dumpArgs === null) {
                         $nativeDumper->stream(
                             $table,
@@ -157,6 +164,7 @@ class DumpController
                 'X-Backfill-Format' => 'sqldump',
                 'Cache-Control' => 'no-cache',
                 'Content-Disposition' => "attachment; filename=\"{$table}.sql\"",
+                'X-Accel-Buffering' => 'no',
             ]);
         } catch (\Throwable $e) {
             try {

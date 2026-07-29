@@ -60,17 +60,20 @@ it('passes the resolved subset query into the initial temporary copy', function 
     $schema->shouldReceive('getColumns')->with('users')->once()->andReturn(['id', 'email']);
     $schema->shouldReceive('hasTimestamps')->with('users')->once()->andReturnTrue();
 
+    $wasPrepared = false;
     $tempDb = Mockery::mock(TempDatabaseService::class);
     $tempDb->shouldReceive('getSourceDatabase')->andReturn('production');
     $tempDb->shouldReceive('prepare')
         ->once()
-        ->with(
-            'users',
-            'SELECT `id` FROM (SELECT `id` FROM `users` ORDER BY `id` DESC LIMIT 2) as _base_users',
-            'id',
-        );
-    $tempDb->shouldReceive('getTempDatabaseName')->once()->andReturn('_backfill_test');
-    $tempDb->shouldReceive('getStrategy')->once()->andReturn('database');
+        ->withArgs(function ($table, $keepQuery, $primaryKey, $onChunk) use (&$wasPrepared) {
+            $wasPrepared = true;
+
+            return $table === 'users'
+                && $keepQuery === 'SELECT `id` FROM (SELECT `id` FROM `users` ORDER BY `id` DESC LIMIT 2) as _base_users'
+                && $primaryKey === 'id'
+                && is_callable($onChunk);
+        });
+    $tempDb->shouldReceive('cleanup')->once()->with('users');
 
     $limiter = Mockery::mock(RowLimiterService::class);
     $limiter->shouldReceive('apply')
@@ -85,7 +88,12 @@ it('passes the resolved subset query into the initial temporary copy', function 
     $requirements = Mockery::mock(ServerRequirementsService::class);
     $requirements->shouldReceive('ensureRequirementsAreMet')
         ->once()
-        ->andReturn('mysqldump');
+        ->andReturnNull();
+
+    $nativeDumper = Mockery::mock(NativeSqlDumpService::class);
+    $nativeDumper->shouldReceive('stream')
+        ->once()
+        ->with('users', $tempDb, ['id', 'email'], ['id']);
 
     $response = (new DumpController)(
         Request::create('/backfill/dump/users'),
@@ -94,11 +102,19 @@ it('passes the resolved subset query into the initial temporary copy', function 
         $tempDb,
         Mockery::mock(SanitizationService::class),
         $limiter,
-        Mockery::mock(NativeSqlDumpService::class),
+        $nativeDumper,
         $requirements,
     );
 
-    expect($response)->toBeInstanceOf(StreamedResponse::class);
+    expect($response)->toBeInstanceOf(StreamedResponse::class)
+        ->and($response->headers->get('X-Accel-Buffering'))->toBe('no')
+        ->and($wasPrepared)->toBeFalse();
+
+    ob_start();
+    $response->sendContent();
+    ob_end_clean();
+
+    expect($wasPrepared)->toBeTrue();
 });
 
 it('rejects a configured limit for a table without a primary key before copying it', function () {
@@ -151,7 +167,12 @@ it('streams a native SQL dump when process execution is unavailable', function (
     $schema->shouldReceive('hasTimestamps')->with('users')->once()->andReturnTrue();
 
     $tempDb = Mockery::mock(TempDatabaseService::class);
-    $tempDb->shouldReceive('prepare')->once()->with('users', null, 'id');
+    $tempDb->shouldReceive('prepare')
+        ->once()
+        ->withArgs(fn ($table, $keepQuery, $primaryKey, $onChunk) => $table === 'users'
+            && $keepQuery === null
+            && $primaryKey === 'id'
+            && is_callable($onChunk));
     $tempDb->shouldReceive('cleanup')->once()->with('users');
 
     $requirements = Mockery::mock(ServerRequirementsService::class);

@@ -75,6 +75,7 @@ class TempDatabaseServiceTest extends TestCase
         config([
             'backfill.server.temp_strategy' => 'database',
             'backfill.server.temp_database' => '_backfill_test',
+            'backfill.server.chunk_size' => 2,
             'database.connections.testing.database' => 'production',
         ]);
 
@@ -100,19 +101,39 @@ class TempDatabaseServiceTest extends TestCase
             ->with('CREATE TABLE `_backfill_test`.`logs` LIKE `production`.`logs`')
             ->andReturnTrue()
             ->ordered();
-        $connection->shouldReceive('statement')
+        $connection->shouldReceive('affectingStatement')
             ->once()
             ->with(
-                'INSERT INTO `_backfill_test`.`logs` SELECT * FROM `production`.`logs` WHERE `id` IN (SELECT `id` FROM `production`.`logs` LIMIT 10)',
+                'INSERT INTO `_backfill_test`.`logs` SELECT * FROM `production`.`logs` WHERE `id` IN (SELECT `id` FROM `production`.`logs` LIMIT 10) ORDER BY `id` ASC LIMIT 2',
+                [],
             )
-            ->andReturnTrue()
+            ->andReturn(2)
+            ->ordered();
+        $connection->shouldReceive('selectOne')
+            ->once()
+            ->with('SELECT MAX(`id`) AS cursor FROM `_backfill_test`.`logs`')
+            ->andReturn((object) ['cursor' => 2])
+            ->ordered();
+        $connection->shouldReceive('affectingStatement')
+            ->once()
+            ->with(
+                'INSERT INTO `_backfill_test`.`logs` SELECT * FROM `production`.`logs` WHERE `id` IN (SELECT `id` FROM `production`.`logs` LIMIT 10) AND `id` > ? ORDER BY `id` ASC LIMIT 2',
+                [2],
+            )
+            ->andReturn(1)
             ->ordered();
 
+        $preparedChunks = [];
         $tempDatabase = new TempDatabaseService;
         $tempDatabase->prepare(
             'logs',
             'SELECT `id` FROM `production`.`logs` LIMIT 10',
             'id',
+            function (int $rowCount) use (&$preparedChunks): void {
+                $preparedChunks[] = $rowCount;
+            },
         );
+
+        $this->assertSame([2, 1], $preparedChunks);
     }
 }

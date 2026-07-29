@@ -83,12 +83,13 @@ class TempDatabaseService
     public function prepare(
         string $table,
         ?string $keepQuery = null,
-        string $primaryKey = 'id',
+        ?string $primaryKey = 'id',
+        ?callable $onChunk = null,
     ): void {
         if ($this->strategy === 'database') {
-            $this->prepareWithDatabase($table, $keepQuery, $primaryKey);
+            $this->prepareWithDatabase($table, $keepQuery, $primaryKey, $onChunk);
         } else {
-            $this->prepareWithTables($table, $keepQuery, $primaryKey);
+            $this->prepareWithTables($table, $keepQuery, $primaryKey, $onChunk);
         }
     }
 
@@ -218,22 +219,27 @@ class TempDatabaseService
     protected function prepareWithDatabase(
         string $table,
         ?string $keepQuery,
-        string $primaryKey,
+        ?string $primaryKey,
+        ?callable $onChunk,
     ): void {
         $this->ensureTempDatabase();
 
         $this->preparedDatabaseTables[] = $table;
         $sourceTable = "`{$this->sourceDatabase}`.`{$table}`";
-        $selection = $this->buildSourceSelection($sourceTable, $keepQuery, $primaryKey);
+        $targetTable = "`{$this->tempDatabase}`.`{$table}`";
 
         $this->db()->statement(
-            "DROP TABLE IF EXISTS `{$this->tempDatabase}`.`{$table}`"
+            "DROP TABLE IF EXISTS {$targetTable}"
         );
         $this->db()->statement(
-            "CREATE TABLE `{$this->tempDatabase}`.`{$table}` LIKE {$sourceTable}"
+            "CREATE TABLE {$targetTable} LIKE {$sourceTable}"
         );
-        $this->db()->statement(
-            "INSERT INTO `{$this->tempDatabase}`.`{$table}` {$selection}"
+        $this->copyRowsInChunks(
+            $targetTable,
+            $sourceTable,
+            $keepQuery,
+            $primaryKey,
+            $onChunk,
         );
     }
 
@@ -280,36 +286,112 @@ class TempDatabaseService
     protected function prepareWithTables(
         string $table,
         ?string $keepQuery,
-        string $primaryKey,
+        ?string $primaryKey,
+        ?callable $onChunk,
     ): void {
         $tempName = '_backfill_'.$table;
         $this->tempTables[$table] = $tempName;
         $sourceTable = "`{$table}`";
-        $selection = $this->buildSourceSelection($sourceTable, $keepQuery, $primaryKey);
+        $targetTable = "`{$tempName}`";
 
-        $this->db()->statement("DROP TABLE IF EXISTS `{$tempName}`");
+        $this->db()->statement("DROP TABLE IF EXISTS {$targetTable}");
 
         if (app()->runningUnitTests()) {
+            $selection = $this->buildSourceSelection($sourceTable, $keepQuery, $primaryKey);
             $this->db()->statement("CREATE TABLE `{$tempName}` AS {$selection}");
 
             return;
         }
 
-        $this->db()->statement("CREATE TABLE `{$tempName}` LIKE `{$table}`");
-        $this->db()->statement("INSERT INTO `{$tempName}` {$selection}");
+        $this->db()->statement("CREATE TABLE {$targetTable} LIKE {$sourceTable}");
+        $this->copyRowsInChunks(
+            $targetTable,
+            $sourceTable,
+            $keepQuery,
+            $primaryKey,
+            $onChunk,
+        );
     }
 
     protected function buildSourceSelection(
         string $sourceTable,
         ?string $keepQuery,
-        string $primaryKey,
+        ?string $primaryKey,
     ): string {
         $selection = "SELECT * FROM {$sourceTable}";
 
         if ($keepQuery !== null) {
+            if ($primaryKey === null) {
+                throw new RuntimeException('A primary key is required to copy a limited table.');
+            }
+
             $selection .= " WHERE `{$primaryKey}` IN ({$keepQuery})";
         }
 
         return $selection;
+    }
+
+    protected function copyRowsInChunks(
+        string $targetTable,
+        string $sourceTable,
+        ?string $keepQuery,
+        ?string $primaryKey,
+        ?callable $onChunk,
+    ): void {
+        $selection = $this->buildSourceSelection($sourceTable, $keepQuery, $primaryKey);
+
+        if ($primaryKey === null) {
+            $rowCount = $this->db()->affectingStatement(
+                "INSERT INTO {$targetTable} {$selection}"
+            );
+
+            if ($rowCount > 0 && $onChunk !== null) {
+                $onChunk($rowCount);
+            }
+
+            return;
+        }
+
+        $chunkSize = max(1, (int) config('backfill.server.chunk_size', 5000));
+        $cursor = null;
+
+        do {
+            $chunkSelection = $selection;
+            $bindings = [];
+
+            if ($cursor !== null) {
+                $connector = $keepQuery === null ? ' WHERE' : ' AND';
+                $chunkSelection .= "{$connector} `{$primaryKey}` > ?";
+                $bindings[] = $cursor;
+            }
+
+            $chunkSelection .= " ORDER BY `{$primaryKey}` ASC LIMIT {$chunkSize}";
+
+            $rowCount = $this->db()->affectingStatement(
+                "INSERT INTO {$targetTable} {$chunkSelection}",
+                $bindings,
+            );
+
+            if ($rowCount > 0 && $onChunk !== null) {
+                $onChunk($rowCount);
+            }
+
+            if ($rowCount < $chunkSize) {
+                break;
+            }
+
+            $result = $this->db()->selectOne(
+                "SELECT MAX(`{$primaryKey}`) AS cursor FROM {$targetTable}"
+            );
+            $nextCursor = $result->cursor ?? null;
+
+            if ($nextCursor === null || $nextCursor === $cursor) {
+                throw new RuntimeException(
+                    "Unable to advance the Backfill cursor for '{$sourceTable}'."
+                );
+            }
+
+            $cursor = $nextCursor;
+        } while (true);
     }
 }
