@@ -381,9 +381,9 @@ class TempDatabaseService
             }
 
             $result = $this->db()->selectOne(
-                "SELECT MAX(`{$primaryKey}`) AS cursor FROM {$targetTable}"
+                "SELECT MAX(`{$primaryKey}`) AS backfill_cursor FROM {$targetTable}"
             );
-            $nextCursor = $result->cursor ?? null;
+            $nextCursor = $result->backfill_cursor ?? null;
 
             if ($nextCursor === null || $nextCursor === $cursor) {
                 throw new RuntimeException(

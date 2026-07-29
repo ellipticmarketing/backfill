@@ -111,8 +111,8 @@ class TempDatabaseServiceTest extends TestCase
             ->ordered();
         $connection->shouldReceive('selectOne')
             ->once()
-            ->with('SELECT MAX(`id`) AS cursor FROM `_backfill_test`.`logs`')
-            ->andReturn((object) ['cursor' => 2])
+            ->with('SELECT MAX(`id`) AS backfill_cursor FROM `_backfill_test`.`logs`')
+            ->andReturn((object) ['backfill_cursor' => 2])
             ->ordered();
         $connection->shouldReceive('affectingStatement')
             ->once()
