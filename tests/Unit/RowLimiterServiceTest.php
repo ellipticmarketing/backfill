@@ -261,4 +261,53 @@ class RowLimiterServiceTest extends TestCase
 
         $resolver->buildKeepQuery('settings');
     }
+
+    public function test_per_table_mode_uses_only_the_tables_intrinsic_limit(): void
+    {
+        $schema = \Mockery::mock(SchemaService::class);
+        $schema->shouldReceive('getPrimaryKey')
+            ->twice()
+            ->with('countries')
+            ->andReturn(['id']);
+        $schema->shouldNotReceive('getTables');
+        $schema->shouldNotReceive('getForeignKeys');
+
+        $resolver = new SubsetResolverService($schema, [
+            'countries' => [
+                'max_rows' => 25,
+                'order_by' => 'id',
+                'direction' => 'desc',
+            ],
+            'subscribers' => ['max_rows' => 1000],
+            'subscriber_actions' => ['max_rows' => 1000],
+            'subscriber_products' => ['max_rows' => 1000],
+        ], 'production', 'table');
+
+        expect($resolver->buildKeepQuery('countries'))
+            ->toBe(
+                'SELECT `id` FROM (SELECT `id` FROM `countries` ORDER BY `id` DESC LIMIT 25) as _base_countries'
+            )
+            ->not->toContain('subscribers')
+            ->not->toContain('subscriber_actions')
+            ->not->toContain('subscriber_products')
+            ->not->toContain('UNION');
+    }
+
+    public function test_per_table_mode_copies_an_unlimited_table_without_resolving_relationships(): void
+    {
+        $schema = \Mockery::mock(SchemaService::class);
+        $schema->shouldReceive('getPrimaryKey')
+            ->twice()
+            ->with('settings')
+            ->andReturn(['id']);
+        $schema->shouldNotReceive('getTables');
+        $schema->shouldNotReceive('getForeignKeys');
+
+        $resolver = new SubsetResolverService($schema, [
+            'subscribers' => ['max_rows' => 1000],
+        ], 'production', 'table');
+
+        expect($resolver->buildKeepQuery('settings'))
+            ->toBe('SELECT `id` FROM `settings`');
+    }
 }

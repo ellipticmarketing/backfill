@@ -55,8 +55,7 @@ it('passes the resolved subset query into the initial temporary copy', function 
 
     $schema = Mockery::mock(SchemaService::class);
     $schema->shouldReceive('getTables')->with([])->once()->andReturn(['users']);
-    $schema->shouldReceive('getTables')->withNoArgs()->once()->andReturn(['users']);
-    $schema->shouldReceive('getForeignKeys')->with(['users'])->once()->andReturn([]);
+    $schema->shouldNotReceive('getForeignKeys');
     $schema->shouldReceive('getPrimaryKey')->with('users')->andReturn(['id']);
     $schema->shouldReceive('getColumns')->with('users')->once()->andReturn(['id', 'email']);
     $schema->shouldReceive('hasTimestamps')->with('users')->once()->andReturnTrue();
@@ -67,7 +66,7 @@ it('passes the resolved subset query into the initial temporary copy', function 
         ->once()
         ->with(
             'users',
-            'SELECT `id` FROM `users` WHERE `id` IN (SELECT `id` FROM (SELECT `id` FROM `users` ORDER BY `id` DESC LIMIT 2) as _base_users)',
+            'SELECT `id` FROM (SELECT `id` FROM `users` ORDER BY `id` DESC LIMIT 2) as _base_users',
             'id',
         );
     $tempDb->shouldReceive('getTempDatabaseName')->once()->andReturn('_backfill_test');

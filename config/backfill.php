@@ -152,6 +152,15 @@ return [
     ],
 
     /*
+    | Limit resolution mode:
+    | - 'table': apply only each table's own limit. Unlimited tables copy in full.
+    |   This is the default for small development subsets and avoids recursive SQL.
+    | - 'relationships': recursively include/exclude related rows to preserve
+    |   foreign-key subsets. This can generate expensive SQL for dense schemas.
+    */
+    'limit_mode' => env('BACKFILL_LIMIT_MODE', 'table'),
+
+    /*
     |--------------------------------------------------------------------------
     | Excluded Tables
     |--------------------------------------------------------------------------

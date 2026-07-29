@@ -259,6 +259,8 @@ END
 ### Row Limits
 
 ```php
+'limit_mode' => 'table',
+
 'limits' => [
     'table_name' => [
         'max_rows' => 1000,             // Required
@@ -274,11 +276,21 @@ The resolved subset is applied during the initial copy into the temporary worksp
 
 Tables without a primary key can still be synced in full. Configuring a limit for one fails with a clear error because Backfill cannot identify a stable row subset safely.
 
-The package resolves foreign key dependencies utilizing a **Stateless Subset Resolver**:
+The default `table` mode applies only each table's own `max_rows` and
+`keep_days` rules. Unlimited tables copy in full. It never builds recursive
+foreign-key SQL, making it the reliable choice for small development subsets
+on dense schemas.
+
+Set `BACKFILL_LIMIT_MODE=relationships` to opt into the relationship-aware
+**Stateless Subset Resolver**:
+
 - **Bottom-Up Inclusion:** If a child table has no limit (e.g., you want all recent `cars`), the package organically keeps *all parent rows* referenced by those cars, even if the parent table itself has a limit (e.g., `users`).
 - **Top-Down Exclusion:** If a parent row evaluates as too old and gets discarded, any child rows referencing that orphaned parent are automatically removed as well.
 
-This ensures perfect referential integrity, computing exact subsets via recursive subqueries directly in the database engine without PHP memory pressure.
+Relationship mode preserves referential subsets, but its recursive SQL can be
+expensive for highly connected schemas. Imports disable foreign-key checks, so
+the default per-table mode can intentionally load partial test data without
+blocking on missing related rows.
 
 **Example:**
 
@@ -606,7 +618,9 @@ The package handles FK dependencies at three levels:
 
 1. **Import order:** Tables are topologically sorted so parent tables are imported before children. Discovered automatically via `INFORMATION_SCHEMA.KEY_COLUMN_USAGE`.
 
-2. **Row limiting:** When a parent table has a row limit, child rows referencing deleted parents are cleaned up first to prevent orphan records.
+2. **Optional relationship-aware row limiting:** With
+   `BACKFILL_LIMIT_MODE=relationships`, parent and child limits are resolved
+   recursively. The default `table` mode applies each table's limit independently.
 
 3. **Import execution:** FK checks are disabled during import (`SET FOREIGN_KEY_CHECKS=0`) and re-enabled afterward.
 

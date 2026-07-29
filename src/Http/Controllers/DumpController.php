@@ -57,7 +57,12 @@ class DumpController
                 }
 
                 if ($primaryKey !== null) {
-                    $resolver = new SubsetResolverService($schema, $limits, $tempDb->getSourceDatabase());
+                    $resolver = new SubsetResolverService(
+                        $schema,
+                        $limits,
+                        $tempDb->getSourceDatabase(),
+                        config('backfill.limit_mode', 'table'),
+                    );
                 }
             }
 

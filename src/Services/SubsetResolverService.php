@@ -12,11 +12,24 @@ class SubsetResolverService
 
     protected string $sourceDatabase;
 
-    public function __construct(SchemaService $schema, array $limits, string $sourceDatabase)
-    {
+    protected string $limitMode;
+
+    public function __construct(
+        SchemaService $schema,
+        array $limits,
+        string $sourceDatabase,
+        string $limitMode = 'relationships',
+    ) {
+        if (! in_array($limitMode, ['table', 'relationships'], true)) {
+            throw new RuntimeException(
+                "Unsupported Backfill limit mode '{$limitMode}'."
+            );
+        }
+
         $this->schema = $schema;
         $this->limits = $limits;
         $this->sourceDatabase = $sourceDatabase;
+        $this->limitMode = $limitMode;
     }
 
     protected function getTableRef(string $table): string
@@ -45,6 +58,10 @@ class SubsetResolverService
             throw new RuntimeException(
                 "Cannot resolve a subset for table '{$table}' because it does not have a primary key."
             );
+        }
+
+        if ($this->limitMode === 'table') {
+            return $this->getIntrinsicQuery($table);
         }
 
         // Prevent infinite loops in circular foreign keys
