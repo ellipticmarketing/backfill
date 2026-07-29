@@ -171,6 +171,11 @@ A shared secret token used for all communication between server and client. This
 | `temp_password` | `null` | Password for the alternate DB user |
 | `chunk_size` | `5000` | Number of rows read per chunk when building the SQL dump |
 
+Backfill uses `mysqldump` as the fast path when the PHP web runtime can execute
+processes and the binary is available. If `proc_open` is disabled or
+`mysqldump` is not in the web runtime's `PATH`, it automatically streams
+binary-safe SQL `INSERT` statements through PHP in bounded chunks.
+
 ---
 
 ### Client Settings
@@ -358,6 +363,11 @@ By default, download directories are locally cached for 1 hour (configurable via
 
 If a previous local cache exists, the command will use it, saving a full download cycle. If you need fresh data within that 1 hour window, use the `--fresh` flag.
 
+If any table download fails, the command exits with a failure status before
+schema comparison, import, or sync checkpoint updates. Dumps that completed
+before the failure remain in an explicitly failed cache, so the next run can
+reuse them and retry only the missing tables.
+
 If an interrupted download was detected outside of the cache window (less than 24 hours old), the command will offer a choice:
 
 ```
@@ -487,7 +497,8 @@ Local (Client)                          Production (Server)
    GET /dump/orders                      CREATE TABLE ... LIKE ...
    GET /dump/...                         INSERT INTO temp SELECT subset FROM prod
    (all tables downloaded first)         UPDATE temp (sanitize via SQL)
-                  ◀── streamed .sql ─── VERIFY subset (idempotent limit)
+                  ◀── streamed .sql ─── mysqldump or native PHP fallback
+                                         VERIFY subset (idempotent limit)
                                          DROP temp table
 
 ── Phase 2: Schema Comparison ─────────
@@ -616,7 +627,7 @@ This user is **only used** for:
 - Creating/dropping the temp database
 - Copying tables into the temp database
 - Running sanitization `UPDATE` statements on the temp database
-- Running `mysqldump` on the temp database
+- Reading the temporary data for `mysqldump` or the native SQL fallback
 
 It is **never used** for reading schema information or touching the production database.
 
@@ -679,12 +690,12 @@ The scheduled job is **automatically registered** when `BACKFILL_SERVER_ENABLED=
 | Table has no timestamps | Delta sync falls back to full sync for that specific table. Other tables with timestamps still use delta. |
 | Deleted rows on production | **Not reflected** in delta sync. Use `--full` periodically for a clean state. |
 | Schema changes on production | The pull command automatically compares remote and local schemas before importing. If column mismatches are detected, you'll see a warning table and can choose to abort, run `php artisan migrate`, and retry. |
-| Very large tables (100M+ rows) | The `mysqldump` + `mysql` import path handles this well. Consider using row limits to cap development data size. |
+| Very large tables (100M+ rows) | The `mysqldump` fast path handles this well. The automatic PHP fallback streams in bounded chunks; use row limits to cap development data size and transfer time. |
 | Circular FK references | Detected and handled — cycles are broken in the topological sort. FK checks are disabled during import. |
 | Self-referencing tables | Supported (e.g., `categories.parent_id → categories.id`). Self-references are excluded from FK sorting. |
 | Multiple databases | Currently targets the default database connection only. Multi-database support is not yet implemented. |
 | Supported Engines | The server-side sanitization and transport require **MySQL** or **MariaDB**. The package explicitly checks engine variants and will immediately fail if run against PostgreSQL, SQLite, or SQL Server. |
-| Binary/blob columns | Handled natively by `mysqldump`. No special configuration needed. |
+| Binary/blob columns | Handled by `mysqldump` or encoded as binary-safe hexadecimal literals by the PHP fallback. |
 
 ---
 

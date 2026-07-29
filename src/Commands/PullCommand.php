@@ -213,6 +213,27 @@ class PullCommand extends Command
                 } catch (\Throwable $e) {
                     $this->newLine();
                     $this->error("Error downloading {$table}: {$e->getMessage()}");
+
+                    $downloadBar->advance();
+                    $downloadBar->setMessage('Download failed.');
+                    $downloadBar->finish();
+                    $this->newLine(2);
+
+                    $this->writeDownloadMetadata(
+                        $tempDir,
+                        $mode,
+                        $tableOrder,
+                        $tableInfo,
+                        'failed',
+                        $table,
+                        $e->getMessage(),
+                    );
+
+                    $this->error('Download phase aborted. No local data was imported.');
+                    $this->info('Downloaded data is preserved at:');
+                    $this->line("  <fg=white>{$tempDir}</>");
+
+                    return self::FAILURE;
                 }
 
                 $downloadBar->advance();
@@ -223,12 +244,13 @@ class PullCommand extends Command
             $this->newLine(2);
 
             // Save a timestamp marker so we can detect this download later.
-            file_put_contents($tempDir.DIRECTORY_SEPARATOR.'.backfill-meta.json', json_encode([
-                'downloaded_at' => now()->toIso8601String(),
-                'mode' => $mode,
-                'table_order' => $tableOrder,
-                'table_info' => $tableInfo,
-            ], JSON_PRETTY_PRINT));
+            $this->writeDownloadMetadata(
+                $tempDir,
+                $mode,
+                $tableOrder,
+                $tableInfo,
+                'complete',
+            );
         } else {
             $this->newLine();
         }
@@ -369,6 +391,26 @@ class PullCommand extends Command
         );
 
         return self::SUCCESS;
+    }
+
+    protected function writeDownloadMetadata(
+        string $directory,
+        string $mode,
+        array $tableOrder,
+        array $tableInfo,
+        string $status,
+        ?string $failedTable = null,
+        ?string $error = null,
+    ): void {
+        file_put_contents($directory.DIRECTORY_SEPARATOR.'.backfill-meta.json', json_encode([
+            'downloaded_at' => now()->toIso8601String(),
+            'mode' => $mode,
+            'status' => $status,
+            'failed_table' => $failedTable,
+            'error' => $error,
+            'table_order' => $tableOrder,
+            'table_info' => $tableInfo,
+        ], JSON_PRETTY_PRINT));
     }
 
     /**

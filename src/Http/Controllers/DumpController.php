@@ -2,6 +2,7 @@
 
 namespace Elliptic\Backfill\Http\Controllers;
 
+use Elliptic\Backfill\Services\NativeSqlDumpService;
 use Elliptic\Backfill\Services\RowLimiterService;
 use Elliptic\Backfill\Services\SanitizationService;
 use Elliptic\Backfill\Services\SchemaService;
@@ -24,6 +25,7 @@ class DumpController
         TempDatabaseService $tempDb,
         SanitizationService $sanitizer,
         RowLimiterService $limiter,
+        NativeSqlDumpService $nativeDumper,
         ServerRequirementsService $requirements,
     ): Response {
         $excludedTables = config('backfill.exclude_tables', []);
@@ -86,12 +88,24 @@ class DumpController
                 );
             }
 
-            // Run mysqldump on the temp copy and stream gzipped output
-            $dumpArgs = $this->buildMysqldumpArgs($tempDb, $table, $mysqldumpPath);
+            // Stream the temp copy through mysqldump when available, otherwise
+            // use the PHP-native fallback for restricted PHP-FPM runtimes.
+            $dumpArgs = $mysqldumpPath === null
+                ? null
+                : $this->buildMysqldumpArgs($tempDb, $table, $mysqldumpPath);
             $primaryKey = $schema->getPrimaryKey($table);
+            $columns = $schema->getColumns($table);
             $hasTimestamps = $schema->hasTimestamps($table);
 
-            return new StreamedResponse(function () use ($dumpArgs, $tempDb, $table, $primaryKey, $hasTimestamps) {
+            return new StreamedResponse(function () use (
+                $dumpArgs,
+                $tempDb,
+                $table,
+                $primaryKey,
+                $columns,
+                $hasTimestamps,
+                $nativeDumper,
+            ) {
                 // First, send a small JSON header line with metadata, then the SQL dump
                 $meta = json_encode([
                     'primary_key' => $primaryKey,
@@ -101,22 +115,37 @@ class DumpController
                 echo "-- BEGIN SQL DUMP --\n";
                 flush();
 
-                $process = new Process($dumpArgs);
-                $process->setTimeout(config('backfill.server.dump_timeout', 3600));
+                try {
+                    if ($dumpArgs === null) {
+                        $nativeDumper->stream(
+                            $table,
+                            $tempDb,
+                            $columns,
+                            $primaryKey,
+                        );
 
-                // Stream stdout directly to the HTTP response
-                $process->run(function ($type, $buffer) {
-                    if ($type === Process::OUT) {
-                        echo $buffer;
-                        flush();
+                        return;
                     }
-                });
 
-                if (! $process->isSuccessful()) {
-                    echo "\n-- DUMP ERROR: ".$process->getErrorOutput()." --\n";
+                    $process = new Process($dumpArgs);
+                    $process->setTimeout(config('backfill.server.dump_timeout', 3600));
+
+                    // Stream stdout directly to the HTTP response
+                    $process->run(function ($type, $buffer) {
+                        if ($type === Process::OUT) {
+                            echo $buffer;
+                            flush();
+                        }
+                    });
+
+                    if (! $process->isSuccessful()) {
+                        echo "\n-- DUMP ERROR: ".$process->getErrorOutput()." --\n";
+                    }
+                } catch (\Throwable $e) {
+                    echo "\n-- DUMP ERROR: ".$e->getMessage()." --\n";
+                } finally {
+                    $tempDb->cleanup($table);
                 }
-
-                $tempDb->cleanup($table);
             }, 200, [
                 'Content-Type' => 'application/octet-stream',
                 'X-Backfill-Table' => $table,

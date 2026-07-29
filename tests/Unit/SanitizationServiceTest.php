@@ -200,7 +200,7 @@ it('rejects an HTML error response after valid Backfill metadata', function () {
     }
 })->throws(RuntimeException::class, 'server error response');
 
-it('rejects a mysqldump process error after valid Backfill metadata', function () {
+it('rejects a production dump error after valid Backfill metadata', function () {
     $sourcePath = tempnam(sys_get_temp_dir(), 'backfill-dump-');
     $destinationPath = tempnam(sys_get_temp_dir(), 'backfill-sql-');
     file_put_contents(
@@ -220,4 +220,4 @@ it('rejects a mysqldump process error after valid Backfill metadata', function (
         @unlink($sourcePath);
         @unlink($destinationPath);
     }
-})->throws(RuntimeException::class, 'mysqldump failed');
+})->throws(RuntimeException::class, 'production dump failed');

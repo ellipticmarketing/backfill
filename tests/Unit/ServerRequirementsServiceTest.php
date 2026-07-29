@@ -23,22 +23,17 @@ function requirementsChecker(bool $processExecutionAvailable, ?string $mysqldump
     };
 }
 
-it('rejects servers where proc open is disabled', function () {
-    requirementsChecker(false, '/usr/bin/mysqldump')->ensureRequirementsAreMet();
-})->throws(
-    RuntimeException::class,
-    'The PHP proc_open function is disabled'
-);
+it('uses the native fallback when proc open is disabled', function () {
+    expect(requirementsChecker(false, '/usr/bin/mysqldump')->ensureRequirementsAreMet())
+        ->toBeNull();
+});
 
-it('rejects servers without an executable mysqldump binary', function () {
-    requirementsChecker(true, null)->ensureRequirementsAreMet();
-})->throws(
-    RuntimeException::class,
-    'The mysqldump executable was not found'
-);
+it('uses the native fallback when mysqldump is unavailable', function () {
+    expect(requirementsChecker(true, null)->ensureRequirementsAreMet())
+        ->toBeNull();
+});
 
 it('accepts servers with process execution and mysqldump', function () {
-    requirementsChecker(true, '/usr/bin/mysqldump')->ensureRequirementsAreMet();
-
-    expect(true)->toBeTrue();
+    expect(requirementsChecker(true, '/usr/bin/mysqldump')->ensureRequirementsAreMet())
+        ->toBe('/usr/bin/mysqldump');
 });

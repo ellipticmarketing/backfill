@@ -1,6 +1,7 @@
 <?php
 
 use Elliptic\Backfill\Http\Controllers\DumpController;
+use Elliptic\Backfill\Services\NativeSqlDumpService;
 use Elliptic\Backfill\Services\RowLimiterService;
 use Elliptic\Backfill\Services\SanitizationService;
 use Elliptic\Backfill\Services\SchemaService;
@@ -34,6 +35,7 @@ it('returns a clear error before preparing data when server requirements are mis
         $tempDb,
         Mockery::mock(SanitizationService::class),
         Mockery::mock(RowLimiterService::class),
+        Mockery::mock(NativeSqlDumpService::class),
         $requirements,
     );
 
@@ -56,6 +58,7 @@ it('passes the resolved subset query into the initial temporary copy', function 
     $schema->shouldReceive('getTables')->withNoArgs()->once()->andReturn(['users']);
     $schema->shouldReceive('getForeignKeys')->with(['users'])->once()->andReturn([]);
     $schema->shouldReceive('getPrimaryKey')->with('users')->andReturn(['id']);
+    $schema->shouldReceive('getColumns')->with('users')->once()->andReturn(['id', 'email']);
     $schema->shouldReceive('hasTimestamps')->with('users')->once()->andReturnTrue();
 
     $tempDb = Mockery::mock(TempDatabaseService::class);
@@ -92,6 +95,7 @@ it('passes the resolved subset query into the initial temporary copy', function 
         $tempDb,
         Mockery::mock(SanitizationService::class),
         $limiter,
+        Mockery::mock(NativeSqlDumpService::class),
         $requirements,
     );
 
@@ -126,10 +130,58 @@ it('rejects a configured limit for a table without a primary key before copying 
         $tempDb,
         Mockery::mock(SanitizationService::class),
         Mockery::mock(RowLimiterService::class),
+        Mockery::mock(NativeSqlDumpService::class),
         $requirements,
     );
 
     expect($response->getStatusCode())->toBe(500)
         ->and($response->getContent())
         ->toContain("Cannot limit table 'settings' because it does not have a primary key.");
+});
+
+it('streams a native SQL dump when process execution is unavailable', function () {
+    config([
+        'backfill.exclude_tables' => [],
+        'backfill.limits' => [],
+    ]);
+
+    $schema = Mockery::mock(SchemaService::class);
+    $schema->shouldReceive('getTables')->with([])->once()->andReturn(['users']);
+    $schema->shouldReceive('getPrimaryKey')->with('users')->andReturn(['id']);
+    $schema->shouldReceive('getColumns')->with('users')->once()->andReturn(['id', 'email']);
+    $schema->shouldReceive('hasTimestamps')->with('users')->once()->andReturnTrue();
+
+    $tempDb = Mockery::mock(TempDatabaseService::class);
+    $tempDb->shouldReceive('prepare')->once()->with('users', null, 'id');
+    $tempDb->shouldReceive('cleanup')->once()->with('users');
+
+    $requirements = Mockery::mock(ServerRequirementsService::class);
+    $requirements->shouldReceive('ensureRequirementsAreMet')
+        ->once()
+        ->andReturnNull();
+
+    $nativeDumper = Mockery::mock(NativeSqlDumpService::class);
+    $nativeDumper->shouldReceive('stream')
+        ->once()
+        ->with('users', $tempDb, ['id', 'email'], ['id']);
+
+    $response = (new DumpController)(
+        Request::create('/backfill/dump/users'),
+        'users',
+        $schema,
+        $tempDb,
+        Mockery::mock(SanitizationService::class),
+        Mockery::mock(RowLimiterService::class),
+        $nativeDumper,
+        $requirements,
+    );
+
+    ob_start();
+    $response->sendContent();
+    $content = ob_get_clean();
+
+    expect($content)
+        ->toContain('{"primary_key":["id"],"has_timestamps":true}')
+        ->toContain('-- BEGIN SQL DUMP --')
+        ->not->toContain('-- DUMP ERROR:');
 });

@@ -74,11 +74,19 @@ it('downloads missing tables when a recent cache is only partially complete', fu
     $client->shouldReceive('downloadTableDump')
         ->once()
         ->with('orders', $cacheDir, null)
-        ->andReturnUsing(fn () => File::put($cacheDir.'/orders.sql', '-- downloaded orders dump'));
+        ->andReturnUsing(function () use ($cacheDir) {
+            File::put($cacheDir.'/orders.sql', '-- downloaded orders dump');
+
+            return ['path' => $cacheDir.'/orders.sql', 'meta' => []];
+        });
     $client->shouldReceive('downloadTableDump')
         ->once()
         ->with('products', $cacheDir, null)
-        ->andReturnUsing(fn () => File::put($cacheDir.'/products.sql', '-- downloaded products dump'));
+        ->andReturnUsing(function () use ($cacheDir) {
+            File::put($cacheDir.'/products.sql', '-- downloaded products dump');
+
+            return ['path' => $cacheDir.'/products.sql', 'meta' => []];
+        });
 
     $importer = Mockery::mock(ImportService::class);
     $importer->shouldReceive('importSqlDump')->once()->withArgs(function ($table, $path, $isDelta) {
@@ -107,6 +115,75 @@ it('downloads missing tables when a recent cache is only partially complete', fu
             ->assertExitCode(0);
     } finally {
         File::deleteDirectory($cacheDir);
+        File::delete(storage_path('backfill-state.json'));
+    }
+});
+
+it('aborts the sync and preserves an incomplete cache when a table download fails', function () {
+    File::delete(storage_path('backfill-state.json'));
+
+    foreach (glob(storage_path('app/backfill-*'), GLOB_ONLYDIR) ?: [] as $directory) {
+        File::deleteDirectory($directory);
+    }
+
+    $manifest = [
+        'server_time' => '2026-07-28T23:30:00Z',
+        'table_order' => ['users', 'orders'],
+        'tables' => [
+            'users' => ['row_count' => 3, 'columns' => []],
+            'orders' => ['row_count' => 2, 'columns' => []],
+        ],
+    ];
+
+    $client = Mockery::mock(SyncClient::class);
+    $client->shouldReceive('getManifest')
+        ->once()
+        ->with(null)
+        ->andReturn($manifest);
+    $client->shouldReceive('downloadTableDump')
+        ->once()
+        ->withArgs(fn ($table, $directory, $after) => $table === 'users' && $after === null)
+        ->andReturnUsing(function ($table, $directory) {
+            File::put($directory.'/users.sql', '-- downloaded users dump');
+
+            return ['path' => $directory.'/users.sql', 'meta' => []];
+        });
+    $client->shouldReceive('downloadTableDump')
+        ->once()
+        ->withArgs(fn ($table, $directory, $after) => $table === 'orders' && $after === null)
+        ->andThrow(new RuntimeException('production dump failed'));
+
+    $importer = Mockery::mock(ImportService::class);
+    $importer->shouldNotReceive('importSqlDump');
+
+    app()->instance(SyncClient::class, $client);
+    app()->instance(ImportService::class, $importer);
+
+    try {
+        $this->artisan('backfill:pull --full --force --fresh')
+            ->expectsOutputToContain('Error downloading orders: production dump failed')
+            ->expectsOutputToContain('Downloaded data is preserved')
+            ->doesntExpectOutputToContain('Sync complete')
+            ->assertExitCode(1);
+
+        expect(File::exists(storage_path('backfill-state.json')))->toBeFalse();
+
+        $cacheDirectories = glob(storage_path('app/backfill-*'), GLOB_ONLYDIR) ?: [];
+        expect($cacheDirectories)->toHaveCount(1);
+
+        $metadata = json_decode(
+            File::get($cacheDirectories[0].'/.backfill-meta.json'),
+            true,
+        );
+
+        expect($metadata['status'])->toBe('failed')
+            ->and($metadata['failed_table'])->toBe('orders')
+            ->and(File::exists($cacheDirectories[0].'/users.sql'))->toBeTrue()
+            ->and(File::exists($cacheDirectories[0].'/orders.sql'))->toBeFalse();
+    } finally {
+        foreach (glob(storage_path('app/backfill-*'), GLOB_ONLYDIR) ?: [] as $directory) {
+            File::deleteDirectory($directory);
+        }
         File::delete(storage_path('backfill-state.json'));
     }
 });

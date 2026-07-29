@@ -2,30 +2,23 @@
 
 namespace Elliptic\Backfill\Services;
 
-use RuntimeException;
 use Symfony\Component\Process\ExecutableFinder;
 
 class ServerRequirementsService
 {
-    public function ensureRequirementsAreMet(): string
+    /**
+     * Resolve the mysqldump fast path when process execution is available.
+     *
+     * A null result instructs the dump controller to use the PHP-native
+     * streaming fallback.
+     */
+    public function ensureRequirementsAreMet(): ?string
     {
         if (! $this->isProcessExecutionAvailable()) {
-            throw new RuntimeException(
-                'Backfill server requirement not met: The PHP proc_open function is disabled. '
-                .'Enable proc_open for the PHP-FPM/web runtime before using Backfill.'
-            );
+            return null;
         }
 
-        $mysqldumpPath = $this->findMysqldump();
-
-        if ($mysqldumpPath === null) {
-            throw new RuntimeException(
-                'Backfill server requirement not met: The mysqldump executable was not found. '
-                .'Install a MySQL or MariaDB client and ensure mysqldump is available in the PHP-FPM/web PATH.'
-            );
-        }
-
-        return $mysqldumpPath;
+        return $this->findMysqldump();
     }
 
     protected function isProcessExecutionAvailable(): bool

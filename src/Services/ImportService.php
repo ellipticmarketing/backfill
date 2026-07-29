@@ -49,7 +49,7 @@ class ImportService
         // The dump from the server uses the temp table/db name in INSERT statements.
         // We need to rewrite those to point at the real table name.
         // The sed-like approach: pipe through a replacement, or just load directly
-        // since mysqldump with --no-create-info just produces INSERT statements.
+        // because both mysqldump and the native fallback produce INSERT statements.
 
         // Build the mysql import command
         // The dump may reference a temp table name — we'll handle this with a

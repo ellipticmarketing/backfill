@@ -159,7 +159,7 @@ class SyncClient
                 @unlink($destPath);
 
                 throw new RuntimeException(
-                    'The production mysqldump failed while generating the Backfill dump. Check the production Laravel log.'
+                    'The production dump failed while generating the Backfill SQL. Check the production Laravel log.'
                 );
             }
 

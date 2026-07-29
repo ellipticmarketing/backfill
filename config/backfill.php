@@ -45,7 +45,7 @@ return [
         'temp_username' => env('BACKFILL_TEMP_USERNAME'),
         'temp_password' => env('BACKFILL_TEMP_PASSWORD'),
 
-        // Number of rows to read per chunk when streaming data
+        // Number of rows per INSERT statement when using the PHP-native dump fallback
         'chunk_size' => 5000,
     ],
 
