@@ -198,6 +198,7 @@ class DumpController
                         $chunkResult = [
                             'next_cursor' => $state['next_cursor'] ?? $chunkContext['cursor'],
                             'complete' => $state['row_count'] < $chunkContext['chunk_size'],
+                            'chunk_rows' => $state['row_count'],
                         ];
                     }
 

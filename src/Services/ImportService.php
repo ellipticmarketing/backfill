@@ -9,6 +9,13 @@ use Symfony\Component\Process\Process;
 
 class ImportService
 {
+    protected SqlDumpTransformer $sqlDumpTransformer;
+
+    public function __construct(?SqlDumpTransformer $sqlDumpTransformer = null)
+    {
+        $this->sqlDumpTransformer = $sqlDumpTransformer ?? new SqlDumpTransformer;
+    }
+
     /**
      * Import a SQL dump file into the local database using the mysql CLI.
      * This is the fastest possible import method.
@@ -39,81 +46,53 @@ class ImportService
         $password = $dbConfig['password'] ?? '';
         $database = $dbConfig['database'];
 
-        // If full import, truncate the table first
-        if (! $isDelta) {
-            $this->disableForeignKeyChecks();
-            DB::table($table)->truncate();
-            $this->enableForeignKeyChecks();
-        }
+        $importPath = $sqlFilePath.'.'.bin2hex(random_bytes(8)).'.import.sql';
 
-        // The dump from the server uses the temp table/db name in INSERT statements.
-        // We need to rewrite those to point at the real table name.
-        // The sed-like approach: pipe through a replacement, or just load directly
-        // because both mysqldump and the native fallback produce INSERT statements.
-
-        // Build the mysql import command
-        // The dump may reference a temp table name — we'll handle this with a
-        // SQL wrapper that renames inserts via a temp-to-real table mapping.
-        $sql = $this->prepareSqlForImport($table, $sqlFilePath, $isDelta);
-        $importPath = $sqlFilePath.'.import.sql';
-        file_put_contents($importPath, $sql);
-
-        $args = array_filter([
-            'mysql',
-            '--host='.$host,
-            '--port='.$port,
-            '--user='.$username,
-            $password ? '--password='.$password : null,
-            $database,
-        ]);
-
-        $process = Process::fromShellCommandline(
-            implode(' ', array_map('escapeshellarg', $args)).' < '.escapeshellarg($importPath)
-        );
-        $process->setTimeout(config('backfill.client.timeout', 300));
-        $process->run();
-
-        @unlink($importPath);
-
-        if (! $process->isSuccessful()) {
-            throw new RuntimeException(
-                "MySQL import failed for table '{$table}': ".$process->getErrorOutput()
+        try {
+            $this->sqlDumpTransformer->writeImportFile(
+                $table,
+                $sqlFilePath,
+                $importPath,
+                $isDelta,
             );
+
+            if (! $isDelta) {
+                $this->disableForeignKeyChecks();
+
+                try {
+                    DB::table($table)->truncate();
+                } finally {
+                    $this->enableForeignKeyChecks();
+                }
+            }
+
+            $args = array_filter([
+                'mysql',
+                '--host='.$host,
+                '--port='.$port,
+                '--user='.$username,
+                $password ? '--password='.$password : null,
+                $database,
+            ]);
+
+            $process = Process::fromShellCommandline(
+                implode(' ', array_map('escapeshellarg', $args)).' < '.escapeshellarg($importPath)
+            );
+            $process->setTimeout(
+                max(1, (int) config('backfill.client.import_timeout', 3600))
+            );
+            $process->run();
+
+            if (! $process->isSuccessful()) {
+                throw new RuntimeException(
+                    "MySQL import failed for table '{$table}': ".$process->getErrorOutput()
+                );
+            }
+        } finally {
+            @unlink($importPath);
         }
 
-        // Approximate row count from the imported data
         return DB::table($table)->count();
-    }
-
-    /**
-     * Prepare the SQL dump for import into the local database.
-     *
-     * The server's dump may reference temp table names (e.g., `_backfill_users`).
-     * This method rewrites the SQL so INSERTs target the correct local table.
-     * For delta mode, it converts INSERT INTO to INSERT ... ON DUPLICATE KEY UPDATE.
-     */
-    protected function prepareSqlForImport(string $table, string $sqlFilePath, bool $isDelta): string
-    {
-        $sql = file_get_contents($sqlFilePath);
-
-        // Replace any temp table references with the real table name
-        // The dump may contain `_backfill_{table}` or just `{table}` depending on strategy
-        $sql = str_replace("`_backfill_{$table}`", "`{$table}`", $sql);
-
-        if ($isDelta) {
-            // Wrap in a session that converts INSERTs to upserts
-            $wrapped = "SET FOREIGN_KEY_CHECKS=0;\n";
-
-            // Use REPLACE INTO instead of INSERT INTO for upsert behavior
-            $sql = str_replace('INSERT INTO', 'REPLACE INTO', $sql);
-            $wrapped .= $sql;
-            $wrapped .= "\nSET FOREIGN_KEY_CHECKS=1;\n";
-
-            return $wrapped;
-        }
-
-        // Full import: disable FK checks, run the dump, re-enable
-        return "SET FOREIGN_KEY_CHECKS=0;\n".$sql."\nSET FOREIGN_KEY_CHECKS=1;\n";
     }
 
     /**

@@ -71,6 +71,9 @@ return [
         // HTTP timeout in seconds for each chunk request
         'timeout' => 300,
 
+        // Maximum number of seconds allowed for one local table import
+        'import_timeout' => 3600,
+
         // How long to keep local cached dump files (in hours) before requiring a fresh download
         'local_cache_hours' => env('BACKFILL_CACHE_HOURS', 1),
 

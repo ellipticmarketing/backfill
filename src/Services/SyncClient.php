@@ -2,6 +2,7 @@
 
 namespace Elliptic\Backfill\Services;
 
+use Closure;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
@@ -14,6 +15,8 @@ class SyncClient
     protected string $token;
 
     protected int $timeout;
+
+    protected ?Closure $downloadProgressCallback = null;
 
     public function __construct()
     {
@@ -63,6 +66,51 @@ class SyncClient
      */
     public function downloadTableDump(string $table, string $destDir, ?string $after = null): array
     {
+        return $this->downloadTableDumpToFile(
+            $table,
+            $destDir,
+            $after,
+            $this->downloadProgressCallback,
+        );
+    }
+
+    /**
+     * Download the SQL dump and report each validated chunk as it is appended.
+     *
+     * @param  callable(array{
+     *     table: string,
+     *     chunk: int,
+     *     chunk_rows: int|null,
+     *     downloaded_rows: int|null,
+     *     chunk_bytes: int,
+     *     downloaded_bytes: int,
+     *     next_cursor: mixed,
+     *     high_water: mixed,
+     *     complete: bool
+     * }): void  $onProgress
+     */
+    public function downloadTableDumpWithProgress(
+        string $table,
+        string $destDir,
+        ?string $after,
+        callable $onProgress,
+    ): array {
+        $previousCallback = $this->downloadProgressCallback;
+        $this->downloadProgressCallback = Closure::fromCallable($onProgress);
+
+        try {
+            return $this->downloadTableDump($table, $destDir, $after);
+        } finally {
+            $this->downloadProgressCallback = $previousCallback;
+        }
+    }
+
+    protected function downloadTableDumpToFile(
+        string $table,
+        string $destDir,
+        ?string $after,
+        ?callable $onProgress = null,
+    ): array {
         $params = ['chunked' => 1];
         if ($after) {
             $params['after'] = $after;
@@ -74,6 +122,10 @@ class SyncClient
         $buildPath = $filePath.'.part';
         $append = false;
         $previousCursor = null;
+        $chunkNumber = 0;
+        $downloadedRows = 0;
+        $downloadedBytes = 0;
+        $hasCompleteRowProgress = true;
 
         @unlink($tempPath);
         @unlink($buildPath);
@@ -108,29 +160,57 @@ class SyncClient
                 @unlink($tempPath);
             }
 
-            if (! ($meta['chunked'] ?? false) || ($meta['complete'] ?? false)) {
+            $isComplete = ! ($meta['chunked'] ?? false) || ($meta['complete'] ?? false);
+
+            if (! $isComplete) {
+                $nextCursor = $meta['next_cursor'] ?? null;
+                $highWater = $meta['high_water'] ?? null;
+
+                if (
+                    $nextCursor === null
+                    || $highWater === null
+                    || (string) $nextCursor === $previousCursor
+                ) {
+                    @unlink($buildPath);
+
+                    throw new RuntimeException(
+                        "Backfill received invalid chunk progress metadata for '{$table}'."
+                    );
+                }
+
+                $previousCursor = (string) $nextCursor;
+                $params['cursor'] = $previousCursor;
+                $params['high_water'] = (string) $highWater;
+                $append = true;
+            }
+
+            $chunkNumber++;
+            $chunkRows = isset($meta['chunk_rows']) ? (int) $meta['chunk_rows'] : null;
+            $hasCompleteRowProgress = $hasCompleteRowProgress && $chunkRows !== null;
+            $downloadedRows += $chunkRows ?? 0;
+
+            clearstatcache(true, $buildPath);
+            $currentDownloadedBytes = (int) (filesize($buildPath) ?: 0);
+
+            if ($onProgress !== null) {
+                $onProgress([
+                    'table' => $table,
+                    'chunk' => $chunkNumber,
+                    'chunk_rows' => $chunkRows,
+                    'downloaded_rows' => $hasCompleteRowProgress ? $downloadedRows : null,
+                    'chunk_bytes' => $currentDownloadedBytes - $downloadedBytes,
+                    'downloaded_bytes' => $currentDownloadedBytes,
+                    'next_cursor' => $meta['next_cursor'] ?? null,
+                    'high_water' => $meta['high_water'] ?? null,
+                    'complete' => $isComplete,
+                ]);
+            }
+
+            $downloadedBytes = $currentDownloadedBytes;
+
+            if ($isComplete) {
                 break;
             }
-
-            $nextCursor = $meta['next_cursor'] ?? null;
-            $highWater = $meta['high_water'] ?? null;
-
-            if (
-                $nextCursor === null
-                || $highWater === null
-                || (string) $nextCursor === $previousCursor
-            ) {
-                @unlink($buildPath);
-
-                throw new RuntimeException(
-                    "Backfill received invalid chunk progress metadata for '{$table}'."
-                );
-            }
-
-            $previousCursor = (string) $nextCursor;
-            $params['cursor'] = $previousCursor;
-            $params['high_water'] = (string) $highWater;
-            $append = true;
         } while (true);
 
         if (! @rename($buildPath, $filePath)) {

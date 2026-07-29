@@ -1,6 +1,7 @@
 <?php
 
 use Elliptic\Backfill\Services\ImportService;
+use Elliptic\Backfill\Services\SqlDumpTransformer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -13,7 +14,7 @@ beforeEach(function () {
         $table->timestamps();
     });
 
-    $this->importer = new ImportService;
+    $this->importer = new ImportService(new SqlDumpTransformer);
     $this->tempDir = sys_get_temp_dir().'/backfill-test-'.time();
     @mkdir($this->tempDir, 0755, true);
 });
@@ -96,4 +97,8 @@ it('returns local column listing', function () {
     expect($columns)->toContain('id');
     expect($columns)->toContain('name');
     expect($columns)->toContain('email');
+});
+
+it('uses a dedicated timeout for local imports', function () {
+    expect(config('backfill.client.import_timeout'))->toBe(3600);
 });

@@ -71,18 +71,29 @@ it('downloads missing tables when a recent cache is only partially complete', fu
         ->once()
         ->with(null)
         ->andReturn($manifest);
-    $client->shouldReceive('downloadTableDump')
+    $client->shouldReceive('downloadTableDumpWithProgress')
         ->once()
-        ->with('orders', $cacheDir, null)
-        ->andReturnUsing(function () use ($cacheDir) {
+        ->withArgs(fn ($table, $directory, $after, $onProgress) => $table === 'orders'
+            && $directory === $cacheDir
+            && $after === null
+            && is_callable($onProgress))
+        ->andReturnUsing(function ($table, $directory, $after, $onProgress) use ($cacheDir) {
             File::put($cacheDir.'/orders.sql', '-- downloaded orders dump');
+            $onProgress([
+                'chunk' => 2,
+                'downloaded_rows' => 10000,
+                'downloaded_bytes' => 8388608,
+            ]);
 
             return ['path' => $cacheDir.'/orders.sql', 'meta' => []];
         });
-    $client->shouldReceive('downloadTableDump')
+    $client->shouldReceive('downloadTableDumpWithProgress')
         ->once()
-        ->with('products', $cacheDir, null)
-        ->andReturnUsing(function () use ($cacheDir) {
+        ->withArgs(fn ($table, $directory, $after, $onProgress) => $table === 'products'
+            && $directory === $cacheDir
+            && $after === null
+            && is_callable($onProgress))
+        ->andReturnUsing(function ($table, $directory, $after, $onProgress) use ($cacheDir) {
             File::put($cacheDir.'/products.sql', '-- downloaded products dump');
 
             return ['path' => $cacheDir.'/products.sql', 'meta' => []];
@@ -112,6 +123,7 @@ it('downloads missing tables when a recent cache is only partially complete', fu
         $this->artisan('backfill:pull --full --force')
             ->expectsOutputToContain('Using local copy')
             ->expectsOutputToContain('Tables: 3')
+            ->expectsOutputToContain('Downloading orders — chunk 2, 10,000 rows, 8.0 MB')
             ->assertExitCode(0);
     } finally {
         File::deleteDirectory($cacheDir);
@@ -140,7 +152,7 @@ it('aborts the sync and preserves an incomplete cache when a table download fail
         ->once()
         ->with(null)
         ->andReturn($manifest);
-    $client->shouldReceive('downloadTableDump')
+    $client->shouldReceive('downloadTableDumpWithProgress')
         ->once()
         ->withArgs(fn ($table, $directory, $after) => $table === 'users' && $after === null)
         ->andReturnUsing(function ($table, $directory) {
@@ -148,7 +160,7 @@ it('aborts the sync and preserves an incomplete cache when a table download fail
 
             return ['path' => $directory.'/users.sql', 'meta' => []];
         });
-    $client->shouldReceive('downloadTableDump')
+    $client->shouldReceive('downloadTableDumpWithProgress')
         ->once()
         ->withArgs(fn ($table, $directory, $after) => $table === 'orders' && $after === null)
         ->andThrow(new RuntimeException('production dump failed'));
@@ -180,6 +192,65 @@ it('aborts the sync and preserves an incomplete cache when a table download fail
             ->and($metadata['failed_table'])->toBe('orders')
             ->and(File::exists($cacheDirectories[0].'/users.sql'))->toBeTrue()
             ->and(File::exists($cacheDirectories[0].'/orders.sql'))->toBeFalse();
+    } finally {
+        foreach (glob(storage_path('app/backfill-*'), GLOB_ONLYDIR) ?: [] as $directory) {
+            File::deleteDirectory($directory);
+        }
+        File::delete(storage_path('backfill-state.json'));
+    }
+});
+
+it('fails the sync without advancing its checkpoint when a table import fails', function () {
+    File::delete(storage_path('backfill-state.json'));
+
+    foreach (glob(storage_path('app/backfill-*'), GLOB_ONLYDIR) ?: [] as $directory) {
+        File::deleteDirectory($directory);
+    }
+
+    $manifest = [
+        'server_time' => '2026-07-29T16:00:00Z',
+        'table_order' => ['users'],
+        'tables' => [
+            'users' => ['row_count' => 3, 'columns' => []],
+        ],
+    ];
+
+    $client = Mockery::mock(SyncClient::class);
+    $client->shouldReceive('getManifest')
+        ->once()
+        ->with(null)
+        ->andReturn($manifest);
+    $client->shouldReceive('downloadTableDumpWithProgress')
+        ->once()
+        ->withArgs(fn ($table, $directory, $after, $onProgress) => $table === 'users'
+            && $after === null
+            && is_callable($onProgress))
+        ->andReturnUsing(function ($table, $directory) {
+            File::put($directory.'/users.sql', '-- downloaded users dump');
+
+            return ['path' => $directory.'/users.sql', 'meta' => []];
+        });
+
+    $importer = Mockery::mock(ImportService::class);
+    $importer->shouldReceive('importSqlDump')
+        ->once()
+        ->andThrow(new RuntimeException('mysql import failed'));
+
+    app()->instance(SyncClient::class, $client);
+    app()->instance(ImportService::class, $importer);
+
+    try {
+        $this->artisan('backfill:pull --full --force --fresh')
+            ->expectsOutputToContain('Error importing users: mysql import failed')
+            ->expectsOutputToContain('sync checkpoint was not advanced')
+            ->doesntExpectOutputToContain('Sync complete')
+            ->assertExitCode(1);
+
+        $state = json_decode(File::get(storage_path('backfill-state.json')), true);
+
+        expect($state['last_completed_at'])->toBeNull()
+            ->and($state['history'])->toHaveCount(1)
+            ->and($state['history'][0]['completed_at'])->toBeNull();
     } finally {
         foreach (glob(storage_path('app/backfill-*'), GLOB_ONLYDIR) ?: [] as $directory) {
             File::deleteDirectory($directory);

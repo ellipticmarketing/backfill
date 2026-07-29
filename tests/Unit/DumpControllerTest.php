@@ -293,6 +293,7 @@ it('prepares and returns one bounded HTTP chunk for large tables', function () {
         ->and($chunkResult)->toMatchArray([
             'next_cursor' => '2',
             'complete' => false,
+            'chunk_rows' => 2,
         ])
         ->and($content)->toContain('-- BEGIN SQL DUMP --')
         ->not->toContain('-- DUMP ERROR:');

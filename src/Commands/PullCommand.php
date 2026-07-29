@@ -209,7 +209,17 @@ class PullCommand extends Command
                 $downloadBar->display();
 
                 try {
-                    $client->downloadTableDump($table, $tempDir, $after);
+                    $client->downloadTableDumpWithProgress(
+                        $table,
+                        $tempDir,
+                        $after,
+                        function (array $progress) use ($downloadBar, $table): void {
+                            $downloadBar->setMessage(
+                                $this->formatDownloadProgress($table, $progress)
+                            );
+                            $downloadBar->display();
+                        },
+                    );
                 } catch (\Throwable $e) {
                     $this->newLine();
                     $this->error("Error downloading {$table}: {$e->getMessage()}");
@@ -298,6 +308,7 @@ class PullCommand extends Command
 
         $totalRowsSynced = 0;
         $syncedTables = [];
+        $importErrors = [];
 
         // Determine which tables actually have downloaded dump files
         $importableTables = array_filter($tableOrder, function ($table) use ($tempDir) {
@@ -329,13 +340,25 @@ class PullCommand extends Command
                 $this->newLine();
                 $this->error("Error importing {$table}: {$e->getMessage()}");
                 $syncedTables[$table] = 'error: '.$e->getMessage();
+                $importErrors[$table] = $e->getMessage();
             }
 
             $importBar->advance();
         }
 
-        $importBar->setMessage('Done!');
+        $importBar->setMessage(empty($importErrors) ? 'Done!' : 'Completed with errors.');
         $importBar->finish();
+
+        if (! empty($importErrors)) {
+            $this->newLine(2);
+            $this->error(
+                'Import phase completed with errors; the sync checkpoint was not advanced.'
+            );
+            $this->info('Downloaded data is preserved at:');
+            $this->line("  <fg=white>{$tempDir}</>");
+
+            return self::FAILURE;
+        }
 
         // Add skipped delta tables to synced tables as 0 rows
         foreach ($tableOrder as $table) {
@@ -391,6 +414,46 @@ class PullCommand extends Command
         );
 
         return self::SUCCESS;
+    }
+
+    /**
+     * @param  array{
+     *     chunk: int,
+     *     downloaded_rows: int|null,
+     *     downloaded_bytes: int
+     * }  $progress
+     */
+    protected function formatDownloadProgress(string $table, array $progress): string
+    {
+        $details = ["chunk {$progress['chunk']}"];
+
+        if ($progress['downloaded_rows'] !== null) {
+            $details[] = number_format($progress['downloaded_rows']).' rows';
+        }
+
+        $details[] = $this->formatDownloadBytes($progress['downloaded_bytes']);
+
+        return "Downloading {$table} — ".implode(', ', $details);
+    }
+
+    protected function formatDownloadBytes(int $bytes): string
+    {
+        if ($bytes < 1024) {
+            return number_format($bytes).' B';
+        }
+
+        $units = ['KB', 'MB', 'GB', 'TB'];
+        $value = $bytes / 1024;
+
+        foreach ($units as $unit) {
+            if ($value < 1024 || $unit === 'TB') {
+                return number_format($value, 1).' '.$unit;
+            }
+
+            $value /= 1024;
+        }
+
+        return number_format($bytes).' B';
     }
 
     protected function writeDownloadMetadata(

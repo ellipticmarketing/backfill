@@ -7,6 +7,36 @@ use GuzzleHttp\Psr7\Utils;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
+it('preserves the original download method signature for subclasses', function () {
+    $client = new class extends SyncClient
+    {
+        public function downloadTableDump(
+            string $table,
+            string $destDir,
+            ?string $after = null,
+        ): array {
+            return compact('table', 'destDir', 'after');
+        }
+    };
+
+    expect($client->downloadTableDump('users', 'dumps', '2026-07-29'))
+        ->toBe([
+            'table' => 'users',
+            'destDir' => 'dumps',
+            'after' => '2026-07-29',
+        ])
+        ->and($client->downloadTableDumpWithProgress(
+            'orders',
+            'custom-dumps',
+            null,
+            fn () => null,
+        ))->toBe([
+            'table' => 'orders',
+            'destDir' => 'custom-dumps',
+            'after' => null,
+        ]);
+});
+
 it('downloads a table through bounded HTTP chunks and concatenates them once', function () {
     $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'backfill-sync-client-'.uniqid();
     mkdir($directory);
@@ -22,7 +52,7 @@ it('downloads a table through bounded HTTP chunks and concatenates them once', f
             ])."\n"
             ."-- BEGIN SQL DUMP --\n"
             ."INSERT INTO `users` (`id`) VALUES (1), (2);\n"
-            ."-- END BACKFILL CHUNK {\"next_cursor\":\"2\",\"complete\":false} --\n",
+            ."-- END BACKFILL CHUNK {\"next_cursor\":\"2\",\"complete\":false,\"chunk_rows\":2} --\n",
         )
         ->push(
             json_encode([
@@ -33,18 +63,44 @@ it('downloads a table through bounded HTTP chunks and concatenates them once', f
             ])."\n"
             ."-- BEGIN SQL DUMP --\n"
             ."INSERT INTO `users` (`id`) VALUES (3);\n"
-            ."-- END BACKFILL CHUNK {\"next_cursor\":\"3\",\"complete\":true} --\n",
+            ."-- END BACKFILL CHUNK {\"next_cursor\":\"3\",\"complete\":true,\"chunk_rows\":1} --\n",
         );
 
+    $progressUpdates = [];
+
     try {
-        $result = (new SyncClient)->downloadTableDump('users', $directory);
+        $result = (new SyncClient)->downloadTableDumpWithProgress(
+            'users',
+            $directory,
+            null,
+            function (array $progress) use (&$progressUpdates): void {
+                $progressUpdates[] = $progress;
+            },
+        );
 
         expect(file_get_contents($result['path']))
             ->toBe(
                 "INSERT INTO `users` (`id`) VALUES (1), (2);\n"
                 ."INSERT INTO `users` (`id`) VALUES (3);\n"
             )
-            ->and($result['meta']['complete'])->toBeTrue();
+            ->and($result['meta']['complete'])->toBeTrue()
+            ->and($progressUpdates)->toHaveCount(2)
+            ->and($progressUpdates[0])->toMatchArray([
+                'table' => 'users',
+                'chunk' => 1,
+                'chunk_rows' => 2,
+                'downloaded_rows' => 2,
+                'complete' => false,
+            ])
+            ->and($progressUpdates[1])->toMatchArray([
+                'table' => 'users',
+                'chunk' => 2,
+                'chunk_rows' => 1,
+                'downloaded_rows' => 3,
+                'complete' => true,
+            ])
+            ->and($progressUpdates[1]['downloaded_bytes'])
+            ->toBe(strlen(file_get_contents($result['path'])));
 
         Http::assertSentCount(2);
         Http::assertSent(function (Request $request) {
@@ -129,6 +185,7 @@ it('closes each chunk response before reusing its temporary download path', func
 it('rejects a chunk without its trailing success marker', function () {
     $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'backfill-sync-client-'.uniqid();
     mkdir($directory);
+    $progressUpdates = [];
 
     Http::preventStrayRequests();
     Http::fake([
@@ -145,16 +202,63 @@ it('rejects a chunk without its trailing success marker', function () {
     ]);
 
     try {
-        (new SyncClient)->downloadTableDump('users', $directory);
+        expect(fn () => (new SyncClient)->downloadTableDumpWithProgress(
+            'users',
+            $directory,
+            null,
+            function (array $progress) use (&$progressUpdates): void {
+                $progressUpdates[] = $progress;
+            },
+        ))->toThrow(RuntimeException::class, 'success marker');
     } finally {
-        expect(file_exists($directory.DIRECTORY_SEPARATOR.'users.sql'))->toBeFalse();
+        expect(file_exists($directory.DIRECTORY_SEPARATOR.'users.sql'))->toBeFalse()
+            ->and($progressUpdates)->toBe([]);
 
         foreach (glob($directory.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
             @unlink($file);
         }
         @rmdir($directory);
     }
-})->throws(RuntimeException::class, 'success marker');
+});
+
+it('does not report progress for invalid chunk cursor metadata', function () {
+    $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'backfill-sync-client-'.uniqid();
+    mkdir($directory);
+    $progressUpdates = [];
+
+    Http::preventStrayRequests();
+    Http::fake([
+        '*' => Http::response(
+            json_encode([
+                'primary_key' => ['id'],
+                'has_timestamps' => true,
+                'chunked' => true,
+                'high_water' => '3',
+            ])."\n"
+            ."-- BEGIN SQL DUMP --\n"
+            ."INSERT INTO `users` (`id`) VALUES (1);\n"
+            ."-- END BACKFILL CHUNK {\"complete\":false,\"chunk_rows\":1} --\n",
+        ),
+    ]);
+
+    try {
+        expect(fn () => (new SyncClient)->downloadTableDumpWithProgress(
+            'users',
+            $directory,
+            null,
+            function (array $progress) use (&$progressUpdates): void {
+                $progressUpdates[] = $progress;
+            },
+        ))->toThrow(RuntimeException::class, 'invalid chunk progress metadata');
+
+        expect($progressUpdates)->toBe([]);
+    } finally {
+        foreach (glob($directory.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
+            @unlink($file);
+        }
+        @rmdir($directory);
+    }
+});
 
 it('accepts a complete legacy response from an older server', function () {
     $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'backfill-sync-client-'.uniqid();
@@ -172,11 +276,27 @@ it('accepts a complete legacy response from an older server', function () {
         ),
     ]);
 
+    $progressUpdates = [];
+
     try {
-        $result = (new SyncClient)->downloadTableDump('users', $directory);
+        $result = (new SyncClient)->downloadTableDumpWithProgress(
+            'users',
+            $directory,
+            null,
+            function (array $progress) use (&$progressUpdates): void {
+                $progressUpdates[] = $progress;
+            },
+        );
 
         expect(file_get_contents($result['path']))
-            ->toBe("INSERT INTO `users` (`id`) VALUES (1);\n");
+            ->toBe("INSERT INTO `users` (`id`) VALUES (1);\n")
+            ->and($progressUpdates)->toHaveCount(1)
+            ->and($progressUpdates[0])->toMatchArray([
+                'chunk' => 1,
+                'chunk_rows' => null,
+                'downloaded_rows' => null,
+                'complete' => true,
+            ]);
 
         Http::assertSentCount(1);
     } finally {
