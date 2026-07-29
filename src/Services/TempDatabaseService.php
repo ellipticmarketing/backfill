@@ -139,6 +139,30 @@ class TempDatabaseService
         return $this->sourceDatabase;
     }
 
+    public function getSourceHighWaterMark(string $table, string $primaryKey): ?string
+    {
+        $value = $this->db()
+            ->table(DB::raw("`{$this->sourceDatabase}`.`{$table}`"))
+            ->max($primaryKey);
+
+        return $value === null ? null : (string) $value;
+    }
+
+    /**
+     * @return array{row_count: int, next_cursor: ?string}
+     */
+    public function getPreparedChunkState(string $table, string $primaryKey): array
+    {
+        $query = $this->queryBuilder($table);
+        $rowCount = $query->count();
+        $nextCursor = $query->max($primaryKey);
+
+        return [
+            'row_count' => $rowCount,
+            'next_cursor' => $nextCursor === null ? null : (string) $nextCursor,
+        ];
+    }
+
     /**
      * Get the current temp strategy ('database' or 'tables').
      */

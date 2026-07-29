@@ -9,6 +9,7 @@ use Elliptic\Backfill\Services\ServerRequirementsService;
 use Elliptic\Backfill\Services\SubsetResolverService;
 use Elliptic\Backfill\Services\TempDatabaseService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 it('returns a clear error before preparing data when server requirements are missing', function () {
@@ -93,7 +94,10 @@ it('passes the resolved subset query into the initial temporary copy', function 
     $nativeDumper = Mockery::mock(NativeSqlDumpService::class);
     $nativeDumper->shouldReceive('stream')
         ->once()
-        ->with('users', $tempDb, ['id', 'email'], ['id']);
+        ->with('users', $tempDb, ['id', 'email'], ['id'])
+        ->andReturnUsing(function () {
+            expect(Cache::lock('backfill:dump:users', 1)->get())->toBeFalse();
+        });
 
     $response = (new DumpController)(
         Request::create('/backfill/dump/users'),
@@ -203,5 +207,93 @@ it('streams a native SQL dump when process execution is unavailable', function (
     expect($content)
         ->toContain('{"primary_key":["id"],"has_timestamps":true}')
         ->toContain('-- BEGIN SQL DUMP --')
+        ->not->toContain('-- DUMP ERROR:');
+});
+
+it('prepares and returns one bounded HTTP chunk for large tables', function () {
+    config([
+        'backfill.exclude_tables' => [],
+        'backfill.server.chunk_size' => 2,
+        'backfill.limits' => [
+            'users' => ['max_rows' => 10, 'order_by' => 'id', 'direction' => 'desc'],
+        ],
+    ]);
+
+    $schema = Mockery::mock(SchemaService::class);
+    $schema->shouldReceive('getTables')->with([])->once()->andReturn(['users']);
+    $schema->shouldNotReceive('getForeignKeys');
+    $schema->shouldReceive('getPrimaryKey')->with('users')->andReturn(['id']);
+    $schema->shouldReceive('isIntegerColumn')->with('users', 'id')->once()->andReturnTrue();
+    $schema->shouldReceive('getColumns')->with('users')->once()->andReturn(['id', 'email']);
+    $schema->shouldReceive('hasTimestamps')->with('users')->once()->andReturnTrue();
+
+    $tempDb = Mockery::mock(TempDatabaseService::class);
+    $tempDb->shouldReceive('getSourceDatabase')->andReturn('production');
+    $tempDb->shouldReceive('getSourceHighWaterMark')
+        ->once()
+        ->with('users', 'id')
+        ->andReturn('10');
+    $tempDb->shouldReceive('prepare')
+        ->once()
+        ->with(
+            'users',
+            'SELECT `id` FROM (SELECT `id` FROM (SELECT `id` FROM `users` ORDER BY `id` DESC LIMIT 10) as _base_users) AS `_backfill_chunk` WHERE `_backfill_chunk`.`id` <= 10 AND `_backfill_chunk`.`id` > -2 ORDER BY `_backfill_chunk`.`id` ASC LIMIT 2',
+            'id',
+            null,
+        );
+    $tempDb->shouldReceive('getPreparedChunkState')
+        ->once()
+        ->with('users', 'id')
+        ->andReturn([
+            'row_count' => 2,
+            'next_cursor' => '2',
+        ]);
+    $tempDb->shouldReceive('cleanup')->once()->with('users');
+
+    $requirements = Mockery::mock(ServerRequirementsService::class);
+    $requirements->shouldReceive('ensureRequirementsAreMet')
+        ->once()
+        ->andReturnNull();
+
+    $nativeDumper = Mockery::mock(NativeSqlDumpService::class);
+    $nativeDumper->shouldReceive('stream')
+        ->once()
+        ->with('users', $tempDb, ['id', 'email'], ['id'])
+        ->andReturnUsing(function () {
+            expect(Cache::lock('backfill:dump:users', 1)->get())->toBeFalse();
+        });
+
+    $limiter = Mockery::mock(RowLimiterService::class);
+    $limiter->shouldNotReceive('apply');
+
+    $response = (new DumpController)(
+        Request::create('/backfill/dump/users?chunked=1&cursor=-2'),
+        'users',
+        $schema,
+        $tempDb,
+        Mockery::mock(SanitizationService::class),
+        $limiter,
+        $nativeDumper,
+        $requirements,
+    );
+
+    ob_start();
+    $response->sendContent();
+    $content = ob_get_clean();
+
+    $meta = json_decode(strtok($content, "\n"), true);
+    preg_match('/-- END BACKFILL CHUNK (.+) --/', $content, $matches);
+    $chunkResult = json_decode($matches[1] ?? '', true);
+
+    expect($response)->toBeInstanceOf(StreamedResponse::class)
+        ->and($meta)->toMatchArray([
+            'chunked' => true,
+            'high_water' => '10',
+        ])
+        ->and($chunkResult)->toMatchArray([
+            'next_cursor' => '2',
+            'complete' => false,
+        ])
+        ->and($content)->toContain('-- BEGIN SQL DUMP --')
         ->not->toContain('-- DUMP ERROR:');
 });

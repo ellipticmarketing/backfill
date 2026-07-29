@@ -63,46 +63,80 @@ class SyncClient
      */
     public function downloadTableDump(string $table, string $destDir, ?string $after = null): array
     {
-        $params = [];
+        $params = ['chunked' => 1];
         if ($after) {
             $params['after'] = $after;
         }
 
         $url = $this->url("dump/{$table}");
-
-        // Stream to a temp file, then extract meta and write clean SQL to the final path.
-        // This avoids rename() which fails on Windows due to file locking.
         $filePath = $destDir.DIRECTORY_SEPARATOR."{$table}.sql";
         $tempPath = $filePath.'.tmp';
+        $buildPath = $filePath.'.part';
+        $append = false;
+        $previousCursor = null;
 
-        $response = $this->request()
-            ->timeout($this->timeout)
-            ->withOptions(['sink' => $tempPath])
-            ->get($url, $params);
+        @unlink($tempPath);
+        @unlink($buildPath);
 
-        if (! $response->successful()) {
-            $errorMessage = '';
-            if (file_exists($tempPath)) {
-                $body = file_get_contents($tempPath);
-                $json = json_decode($body, true);
-                $errorMessage = isset($json['error']) ? " — {$json['error']}" : ($body ? ' — '.substr($body, 0, 500) : '');
+        do {
+            $response = $this->request()
+                ->timeout($this->timeout)
+                ->withOptions(['sink' => $tempPath])
+                ->get($url, $params);
+
+            if (! $response->successful()) {
+                $errorMessage = '';
+                if (file_exists($tempPath)) {
+                    $body = file_get_contents($tempPath);
+                    $json = json_decode($body, true);
+                    $errorMessage = isset($json['error']) ? " — {$json['error']}" : ($body ? ' — '.substr($body, 0, 500) : '');
+                }
+                @unlink($tempPath);
+
+                $message = "Failed to download dump for '{$table}': HTTP {$response->status()}{$errorMessage}";
+
+                if ($response->status() === 404) {
+                    $message .= "\n\nRecommendations:\n - Is the elliptic/backfill package installed on the remote server?\n - Make sure the BACKFILL_TOKEN env variable is set and matches on both ends.\n - Make sure BACKFILL_SERVER_ENABLED=true is set on the remote server's .env file.";
+                }
+
+                throw new RuntimeException($message);
             }
+
+            $meta = $this->extractMetaFromDump($tempPath, $buildPath, $append);
             @unlink($tempPath);
 
-            $message = "Failed to download dump for '{$table}': HTTP {$response->status()}{$errorMessage}";
-
-            if ($response->status() === 404) {
-                $message .= "\n\nRecommendations:\n - Is the elliptic/backfill package installed on the remote server?\n - Make sure the BACKFILL_TOKEN env variable is set and matches on both ends.\n - Make sure BACKFILL_SERVER_ENABLED=true is set on the remote server's .env file.";
+            if (! ($meta['chunked'] ?? false) || ($meta['complete'] ?? false)) {
+                break;
             }
 
-            throw new RuntimeException($message);
+            $nextCursor = $meta['next_cursor'] ?? null;
+            $highWater = $meta['high_water'] ?? null;
+
+            if (
+                $nextCursor === null
+                || $highWater === null
+                || (string) $nextCursor === $previousCursor
+            ) {
+                @unlink($buildPath);
+
+                throw new RuntimeException(
+                    "Backfill received invalid chunk progress metadata for '{$table}'."
+                );
+            }
+
+            $previousCursor = (string) $nextCursor;
+            $params['cursor'] = $previousCursor;
+            $params['high_water'] = (string) $highWater;
+            $append = true;
+        } while (true);
+
+        if (! @rename($buildPath, $filePath)) {
+            if (! copy($buildPath, $filePath)) {
+                throw new RuntimeException("Unable to publish Backfill dump to '{$filePath}'.");
+            }
+
+            @unlink($buildPath);
         }
-
-        // The first line of the file is JSON metadata, extract it
-        $meta = $this->extractMetaFromDump($tempPath, $filePath);
-
-        // Clean up the temp download
-        @unlink($tempPath);
 
         return [
             'path' => $filePath,
@@ -114,8 +148,11 @@ class SyncClient
      * Extract the JSON metadata line from a downloaded dump file,
      * and write clean SQL (without the meta header) to the final destination.
      */
-    protected function extractMetaFromDump(string $sourcePath, string $destPath): array
-    {
+    protected function extractMetaFromDump(
+        string $sourcePath,
+        string $destPath,
+        bool $append = false,
+    ): array {
         $handle = fopen($sourcePath, 'r');
         if (! $handle) {
             throw new RuntimeException("Unable to read Backfill dump from '{$sourcePath}'.");
@@ -134,8 +171,10 @@ class SyncClient
             throw new RuntimeException('Downloaded response does not contain valid Backfill metadata and SQL dump content.');
         }
 
-        // Write the remaining SQL content to the final destination
-        $destHandle = fopen($destPath, 'w');
+        $isChunked = (bool) ($meta['chunked'] ?? false);
+        $writePath = $isChunked ? $destPath.'.chunk' : $destPath;
+        $destHandle = fopen($writePath, $isChunked ? 'w' : ($append ? 'a' : 'w'));
+        $chunkResult = null;
 
         while (($line = fgets($handle)) !== false) {
             $trimmedLine = ltrim($line);
@@ -146,6 +185,7 @@ class SyncClient
             ) {
                 fclose($handle);
                 fclose($destHandle);
+                @unlink($writePath);
                 @unlink($destPath);
 
                 throw new RuntimeException(
@@ -156,10 +196,28 @@ class SyncClient
             if (str_contains($line, '-- DUMP ERROR:')) {
                 fclose($handle);
                 fclose($destHandle);
+                @unlink($writePath);
                 @unlink($destPath);
 
                 throw new RuntimeException(
                     'The production dump failed while generating the Backfill SQL. Check the production Laravel log.'
+                );
+            }
+
+            if (preg_match('/^-- END BACKFILL CHUNK (.+) --\s*$/', trim($line), $matches)) {
+                $chunkResult = json_decode($matches[1], true);
+
+                continue;
+            }
+
+            if ($chunkResult !== null && trim($line) !== '') {
+                fclose($handle);
+                fclose($destHandle);
+                @unlink($writePath);
+                @unlink($destPath);
+
+                throw new RuntimeException(
+                    'Downloaded Backfill chunk contains data after its success marker.'
                 );
             }
 
@@ -168,6 +226,26 @@ class SyncClient
 
         fclose($handle);
         fclose($destHandle);
+
+        if ($isChunked) {
+            if (! is_array($chunkResult)) {
+                @unlink($writePath);
+                @unlink($destPath);
+
+                throw new RuntimeException(
+                    'Downloaded Backfill chunk is missing its trailing success marker.'
+                );
+            }
+
+            $chunkHandle = fopen($writePath, 'r');
+            $destHandle = fopen($destPath, $append ? 'a' : 'w');
+            stream_copy_to_stream($chunkHandle, $destHandle);
+            fclose($chunkHandle);
+            fclose($destHandle);
+            @unlink($writePath);
+
+            $meta = array_merge($meta, $chunkResult);
+        }
 
         return $meta;
     }

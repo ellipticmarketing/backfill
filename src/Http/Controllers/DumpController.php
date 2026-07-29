@@ -9,7 +9,9 @@ use Elliptic\Backfill\Services\SchemaService;
 use Elliptic\Backfill\Services\ServerRequirementsService;
 use Elliptic\Backfill\Services\SubsetResolverService;
 use Elliptic\Backfill\Services\TempDatabaseService;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\Response;
@@ -41,6 +43,7 @@ class DumpController
         }
 
         $after = $request->input('after'); // ISO 8601 timestamp for delta sync
+        $dumpLock = null;
 
         try {
             $mysqldumpPath = $requirements->ensureRequirementsAreMet();
@@ -70,6 +73,56 @@ class DumpController
             $primaryKey = $schema->getPrimaryKey($table);
             $columns = $schema->getColumns($table);
             $hasTimestamps = $schema->hasTimestamps($table);
+            $chunkContext = null;
+            $dumpLock = Cache::lock(
+                "backfill:dump:{$table}",
+                (int) config('backfill.server.dump_timeout', 3600) + 60,
+            );
+
+            try {
+                $dumpLock->block(
+                    max(0, (int) config('backfill.server.lock_wait_seconds', 30))
+                );
+            } catch (LockTimeoutException) {
+                return response()->json([
+                    'error' => "Another Backfill request is already processing '{$table}'.",
+                ], Response::HTTP_LOCKED);
+            }
+
+            if (
+                $request->boolean('chunked')
+                && $after === null
+                && count($primaryKey) === 1
+                && $schema->isIntegerColumn($table, $primaryKeyColumn)
+            ) {
+                $resolver ??= new SubsetResolverService(
+                    $schema,
+                    $limits,
+                    $tempDb->getSourceDatabase(),
+                    config('backfill.limit_mode', 'table'),
+                );
+
+                $chunkSize = max(1, (int) config('backfill.server.chunk_size', 5000));
+                $cursor = $this->numericCursor($request->query('cursor'), 'cursor');
+                $highWater = $this->numericCursor(
+                    $request->query('high_water'),
+                    'high_water',
+                ) ?? $tempDb->getSourceHighWaterMark($table, $primaryKeyColumn);
+                $highWater ??= '0';
+
+                $chunkContext = [
+                    'keep_query' => $this->buildChunkKeepQuery(
+                        $resolver->buildKeepQuery($table),
+                        $primaryKeyColumn,
+                        $cursor,
+                        $highWater,
+                        $chunkSize,
+                    ),
+                    'high_water' => $highWater,
+                    'cursor' => $cursor,
+                    'chunk_size' => $chunkSize,
+                ];
+            }
 
             return new StreamedResponse(function () use (
                 $tempDb,
@@ -86,42 +139,66 @@ class DumpController
                 $limiter,
                 $schema,
                 $after,
+                $chunkContext,
+                $dumpLock,
             ) {
-                $meta = json_encode([
+                $meta = json_encode(array_merge([
                     'primary_key' => $primaryKey,
                     'has_timestamps' => $hasTimestamps,
-                ]);
+                ], $chunkContext === null ? [] : [
+                    'chunked' => true,
+                    'high_water' => $chunkContext['high_water'],
+                ]));
                 echo $meta."\n";
                 echo "-- BEGIN SQL DUMP --\n";
                 flush();
 
                 try {
-                    // Start the response before preparing large tables so reverse
-                    // proxies do not time out while waiting for the first byte.
-                    $tempDb->prepare(
-                        $table,
-                        $resolver?->buildKeepQuery($table),
-                        $primaryKeyColumn,
-                        function (int $rowCount): void {
-                            echo "-- BACKFILL PREPARED {$rowCount} ROWS --\n";
-                            flush();
-                        },
-                    );
+                    $chunkResult = null;
 
-                    if (! empty($sanitizeRules)) {
-                        $sanitizer->sanitize($table, $sanitizeRules, $tempDb);
-                    }
-
-                    if ($resolver !== null) {
-                        $limiter->apply($table, $tempDb, $resolver, $schema);
-                    }
-
-                    if ($after && $hasTimestamps) {
-                        $qualified = $tempDb->qualifiedTableName($table);
-                        DB::statement(
-                            "DELETE FROM {$qualified} WHERE `created_at` < ? AND `updated_at` < ?",
-                            [$after, $after]
+                    if ($chunkContext === null) {
+                        $tempDb->prepare(
+                            $table,
+                            $resolver?->buildKeepQuery($table),
+                            $primaryKeyColumn,
+                            function (int $rowCount): void {
+                                echo "-- BACKFILL PREPARED {$rowCount} ROWS --\n";
+                                flush();
+                            },
                         );
+
+                        if (! empty($sanitizeRules)) {
+                            $sanitizer->sanitize($table, $sanitizeRules, $tempDb);
+                        }
+
+                        if ($resolver !== null) {
+                            $limiter->apply($table, $tempDb, $resolver, $schema);
+                        }
+
+                        if ($after && $hasTimestamps) {
+                            $qualified = $tempDb->qualifiedTableName($table);
+                            DB::statement(
+                                "DELETE FROM {$qualified} WHERE `created_at` < ? AND `updated_at` < ?",
+                                [$after, $after]
+                            );
+                        }
+                    } else {
+                        $tempDb->prepare(
+                            $table,
+                            $chunkContext['keep_query'],
+                            $primaryKeyColumn,
+                            null,
+                        );
+
+                        if (! empty($sanitizeRules)) {
+                            $sanitizer->sanitize($table, $sanitizeRules, $tempDb);
+                        }
+
+                        $state = $tempDb->getPreparedChunkState($table, $primaryKeyColumn);
+                        $chunkResult = [
+                            'next_cursor' => $state['next_cursor'] ?? $chunkContext['cursor'],
+                            'complete' => $state['row_count'] < $chunkContext['chunk_size'],
+                        ];
                     }
 
                     $dumpArgs = $mysqldumpPath === null
@@ -135,28 +212,37 @@ class DumpController
                             $columns,
                             $primaryKey,
                         );
+                    } else {
+                        $process = new Process($dumpArgs);
+                        $process->setTimeout(config('backfill.server.dump_timeout', 3600));
 
-                        return;
+                        // Stream stdout directly to the HTTP response
+                        $process->run(function ($type, $buffer) {
+                            if ($type === Process::OUT) {
+                                echo $buffer;
+                                flush();
+                            }
+                        });
+
+                        if (! $process->isSuccessful()) {
+                            echo "\n-- DUMP ERROR: ".$process->getErrorOutput()." --\n";
+
+                            return;
+                        }
                     }
 
-                    $process = new Process($dumpArgs);
-                    $process->setTimeout(config('backfill.server.dump_timeout', 3600));
-
-                    // Stream stdout directly to the HTTP response
-                    $process->run(function ($type, $buffer) {
-                        if ($type === Process::OUT) {
-                            echo $buffer;
-                            flush();
-                        }
-                    });
-
-                    if (! $process->isSuccessful()) {
-                        echo "\n-- DUMP ERROR: ".$process->getErrorOutput()." --\n";
+                    if ($chunkResult !== null) {
+                        echo '-- END BACKFILL CHUNK '.json_encode($chunkResult)." --\n";
+                        flush();
                     }
                 } catch (\Throwable $e) {
                     echo "\n-- DUMP ERROR: ".$e->getMessage()." --\n";
                 } finally {
-                    $tempDb->cleanup($table);
+                    try {
+                        $tempDb->cleanup($table);
+                    } finally {
+                        $dumpLock?->release();
+                    }
                 }
             }, 200, [
                 'Content-Type' => 'application/octet-stream',
@@ -167,6 +253,8 @@ class DumpController
                 'X-Accel-Buffering' => 'no',
             ]);
         } catch (\Throwable $e) {
+            $dumpLock?->release();
+
             try {
                 $tempDb->cleanup($table);
             } catch (\Throwable $cleanupException) {
@@ -177,6 +265,38 @@ class DumpController
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    protected function numericCursor(mixed $value, string $name): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (! is_scalar($value) || preg_match('/^-?\d+$/', (string) $value) !== 1) {
+            throw new RuntimeException("Invalid Backfill {$name}.");
+        }
+
+        return (string) $value;
+    }
+
+    protected function buildChunkKeepQuery(
+        string $baseKeepQuery,
+        string $primaryKey,
+        ?string $cursor,
+        string $highWater,
+        int $chunkSize,
+    ): string {
+        $query = "SELECT `{$primaryKey}` FROM ({$baseKeepQuery}) AS `_backfill_chunk`"
+            ." WHERE `_backfill_chunk`.`{$primaryKey}` <= {$highWater}";
+
+        if ($cursor !== null) {
+            $query .= " AND `_backfill_chunk`.`{$primaryKey}` > {$cursor}";
+        }
+
+        return $query
+            ." ORDER BY `_backfill_chunk`.`{$primaryKey}` ASC"
+            ." LIMIT {$chunkSize}";
     }
 
     /**

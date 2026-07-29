@@ -32,6 +32,15 @@ class SchemaService
         return Schema::getColumnListing($table);
     }
 
+    public function isIntegerColumn(string $table, string $column): bool
+    {
+        return in_array(
+            strtolower(Schema::getColumnType($table, $column)),
+            ['tinyint', 'smallint', 'mediumint', 'int', 'integer', 'bigint'],
+            true,
+        );
+    }
+
     /**
      * Get the primary key column(s) for a table.
      */

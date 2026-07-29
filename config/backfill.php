@@ -47,6 +47,9 @@ return [
 
         // Number of rows per temporary copy and PHP-native dump batch
         'chunk_size' => 5000,
+
+        // How long a chunk request waits for another pull of the same table
+        'lock_wait_seconds' => 30,
     ],
 
     /*
