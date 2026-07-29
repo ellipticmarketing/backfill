@@ -84,26 +84,29 @@ class SyncClient
                 ->withOptions(['sink' => $tempPath])
                 ->get($url, $params);
 
-            if (! $response->successful()) {
-                $errorMessage = '';
-                if (file_exists($tempPath)) {
-                    $body = file_get_contents($tempPath);
-                    $json = json_decode($body, true);
-                    $errorMessage = isset($json['error']) ? " — {$json['error']}" : ($body ? ' — '.substr($body, 0, 500) : '');
+            try {
+                if (! $response->successful()) {
+                    $errorMessage = '';
+                    if (file_exists($tempPath)) {
+                        $body = file_get_contents($tempPath);
+                        $json = json_decode($body, true);
+                        $errorMessage = isset($json['error']) ? " — {$json['error']}" : ($body ? ' — '.substr($body, 0, 500) : '');
+                    }
+
+                    $message = "Failed to download dump for '{$table}': HTTP {$response->status()}{$errorMessage}";
+
+                    if ($response->status() === 404) {
+                        $message .= "\n\nRecommendations:\n - Is the elliptic/backfill package installed on the remote server?\n - Make sure the BACKFILL_TOKEN env variable is set and matches on both ends.\n - Make sure BACKFILL_SERVER_ENABLED=true is set on the remote server's .env file.";
+                    }
+
+                    throw new RuntimeException($message);
                 }
+
+                $meta = $this->extractMetaFromDump($tempPath, $buildPath, $append);
+            } finally {
+                $response->close();
                 @unlink($tempPath);
-
-                $message = "Failed to download dump for '{$table}': HTTP {$response->status()}{$errorMessage}";
-
-                if ($response->status() === 404) {
-                    $message .= "\n\nRecommendations:\n - Is the elliptic/backfill package installed on the remote server?\n - Make sure the BACKFILL_TOKEN env variable is set and matches on both ends.\n - Make sure BACKFILL_SERVER_ENABLED=true is set on the remote server's .env file.";
-                }
-
-                throw new RuntimeException($message);
             }
-
-            $meta = $this->extractMetaFromDump($tempPath, $buildPath, $append);
-            @unlink($tempPath);
 
             if (! ($meta['chunked'] ?? false) || ($meta['complete'] ?? false)) {
                 break;

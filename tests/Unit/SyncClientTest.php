@@ -1,6 +1,9 @@
 <?php
 
 use Elliptic\Backfill\Services\SyncClient;
+use GuzzleHttp\Promise\Create;
+use GuzzleHttp\Psr7\Response as Psr7Response;
+use GuzzleHttp\Psr7\Utils;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
@@ -58,6 +61,63 @@ it('downloads a table through bounded HTTP chunks and concatenates them once', f
                 && ($query['cursor'] ?? null) === '2'
                 && ($query['high_water'] ?? null) === '3';
         });
+    } finally {
+        foreach (glob($directory.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
+            @unlink($file);
+        }
+        @rmdir($directory);
+    }
+});
+
+it('closes each chunk response before reusing its temporary download path', function () {
+    $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'backfill-sync-client-'.uniqid();
+    mkdir($directory);
+
+    $firstChunkBody = Utils::streamFor(
+        json_encode([
+            'primary_key' => ['id'],
+            'has_timestamps' => true,
+            'chunked' => true,
+            'high_water' => '2',
+        ])."\n"
+        ."-- BEGIN SQL DUMP --\n"
+        ."INSERT INTO `users` (`id`) VALUES (1);\n"
+        ."-- END BACKFILL CHUNK {\"next_cursor\":\"1\",\"complete\":false} --\n",
+    );
+    $requestCount = 0;
+
+    Http::preventStrayRequests();
+    Http::fake(function () use ($firstChunkBody, &$requestCount) {
+        $requestCount++;
+
+        if ($requestCount === 1) {
+            return Create::promiseFor(new Psr7Response(200, [], $firstChunkBody));
+        }
+
+        expect($firstChunkBody->isReadable())->toBeFalse();
+
+        return Http::response(
+            json_encode([
+                'primary_key' => ['id'],
+                'has_timestamps' => true,
+                'chunked' => true,
+                'high_water' => '2',
+            ])."\n"
+            ."-- BEGIN SQL DUMP --\n"
+            ."INSERT INTO `users` (`id`) VALUES (2);\n"
+            ."-- END BACKFILL CHUNK {\"next_cursor\":\"2\",\"complete\":true} --\n",
+        );
+    });
+
+    try {
+        $result = (new SyncClient)->downloadTableDump('users', $directory);
+
+        expect(file_get_contents($result['path']))
+            ->toBe(
+                "INSERT INTO `users` (`id`) VALUES (1);\n"
+                ."INSERT INTO `users` (`id`) VALUES (2);\n"
+            )
+            ->and($requestCount)->toBe(2);
     } finally {
         foreach (glob($directory.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
             @unlink($file);
