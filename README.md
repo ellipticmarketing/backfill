@@ -42,6 +42,10 @@ Production data is **never modified**. The package refuses to run destructive op
 
 ## Installation
 
+Requires PHP 8.2+ and Laravel 10, 11, 12, or 13. Laravel 13 requires PHP 8.3+.
+Symfony Process 6, 7, and 8 are supported; Composer selects a compatible version
+for your application. The latest Symfony 8.1 releases require PHP 8.4.1+.
+
 Require the package via Composer:
 
 ```bash

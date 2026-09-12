@@ -26,6 +26,27 @@ jobs:
           - laravel: 12.*
             testbench: 10.*
             pest: 3.*
+          - os: ubuntu-latest
+            php: '8.3'
+            laravel: 13.*
+            testbench: 11.*
+            pest: 4.*
+            symfony: 7.*
+            dependency-version: prefer-stable
+          - os: ubuntu-latest
+            php: '8.4'
+            laravel: 13.*
+            testbench: 11.*
+            pest: 5.*
+            symfony: 8.*
+            dependency-version: prefer-stable
+          - os: ubuntu-latest
+            php: '8.5'
+            laravel: 13.*
+            testbench: 11.*
+            pest: 5.*
+            symfony: 8.*
+            dependency-version: prefer-stable
 
     name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.dependency-version }} - ${{ matrix.os }}
 
@@ -47,7 +68,11 @@ jobs:
 
       - name: Require correct Testbench and Pest
         run: |
-          composer require "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" "pestphp/pest-plugin-laravel:${{ matrix.pest }}" --no-interaction --no-update
+          composer require --dev "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" "pestphp/pest-plugin-laravel:${{ matrix.pest }}" --no-interaction --no-update
+
+      - name: Require Symfony version
+        if: matrix.symfony
+        run: composer require "symfony/process:${{ matrix.symfony }}" --no-interaction --no-update
 
       - name: Install dependencies
         run: composer update --${{ matrix.dependency-version }} --prefer-dist --no-interaction
